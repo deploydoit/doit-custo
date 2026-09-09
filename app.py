@@ -40,6 +40,9 @@ st.markdown("""
 # ─── Carregar planilha DOit ───────────────────────────────────────────────────
 CAMINHO_DOIT = "ListagemdeProdutos DOit.xlsx"
 
+# Planilha de controle (Google Sheets) onde o registro é colado
+URL_PLANILHA_CONTROLE = "https://docs.google.com/spreadsheets/d/11N3sHupQLe4FjITXUvhvGdx6Sf_ZosB_PG7xGuP1PUo/edit?pli=1&gid=0#gid=0"
+
 
 @st.cache_data
 def carregar_doit():
@@ -58,6 +61,108 @@ try:
 except FileNotFoundError:
     st.error("Arquivo 'ListagemdeProdutos DOit.xlsx' não encontrado na pasta do projeto.")
     st.stop()
+
+# ─── Receitas por fornecedor ──────────────────────────────────────────────────
+# Cada receita pré-configura o app para um fornecedor conhecido: qual aba usar,
+# em que linha está o cabeçalho, quais colunas são código/preço e quais opções
+# ativar. O IPI é sempre preenchido à mão pelo usuário.
+#   aba: nome exato da aba a manter selecionada (None = todas)
+#   header: linha do cabeçalho (0 = primeira linha)
+#   codigo/preco: nome da coluna após aplicar o cabeçalho
+#   opcoes: flags de compatibilização a marcar
+#   segunda_col / valor_col / ipi_col: colunas auxiliares de cada opção
+#   passos: instruções mostradas ao usuário
+RECEITAS = {
+    "Stella": {
+        "aba": "Planilha",
+        "header": 0,
+        "codigo": "Referência",
+        "preco": "Prç.ven",
+        "ipi_por_produto": True,
+        "ipi_col": "% IPI",
+        "passos": [
+            "Cabeçalho na linha 0 (primeira linha).",
+            "Código = coluna **Referência** · Preço = coluna **Prç.ven**.",
+            "IPI vem por produto na coluna **% IPI** (já marcado).",
+            "Deixe o campo IPI (%) em 0 — o IPI de cada item é usado automaticamente.",
+        ],
+    },
+    "Rosa Maria": {
+        "aba": "Tabela 2026",
+        "header": 1,
+        "codigo": "REFERÊNCIA",
+        "preco": "PREÇO",
+        "agregar_acabamentos": True,
+        "passos": [
+            "Use apenas a aba **Tabela 2026** (as outras são markup/descritivo).",
+            "Cabeçalho na linha 1.",
+            "Código = coluna **REFERÊNCIA** · Preço = coluna **PREÇO**.",
+            "Cada código tem 2 acabamentos: o app usa o **maior preço** (já marcado).",
+            "Preencha o IPI (%) à mão, se houver.",
+        ],
+    },
+    "Revoluz": {
+        "aba": "Plan1",
+        "header": 1,
+        "codigo": "Produto",
+        "preco": "Valor\nUnitário",
+        "normalizar": True,
+        "passos": [
+            "Cabeçalho na linha 1.",
+            "Código = coluna **Produto** · Preço = coluna **Valor Unitário**.",
+            "Códigos têm acabamentos (ex: -BFM OU PTO): normalização já marcada.",
+            "Preencha o IPI (%) à mão, se houver.",
+        ],
+    },
+    "Revolux": {
+        "aba": "Plan1",
+        "header": 1,
+        "codigo": "Produto",
+        "preco": "Valor\nUnitário",
+        "normalizar": True,
+        "passos": [
+            "Cabeçalho na linha 1.",
+            "Código = coluna **Produto** · Preço = coluna **Valor Unitário**.",
+            "Códigos têm acabamentos: normalização já marcada.",
+            "Preencha o IPI (%) à mão, se houver.",
+        ],
+    },
+    "Spotline": {
+        "aba": "TABELA SPOLINE",
+        "header": 0,
+        "codigo": "ID",
+        "preco": "PREÇO",
+        "concatenar": True,
+        "segunda_col": "DESCRIÇÃO",
+        "passos": [
+            "Cabeçalho na linha 0.",
+            "Código = coluna **ID** · Preço = coluna **PREÇO**.",
+            "O código do DOit junta ID + 1ª palavra da **DESCRIÇÃO**: concatenação já marcada.",
+            "Preencha o IPI (%) à mão, se houver.",
+        ],
+    },
+    "Golden Art": {
+        "aba": None,  # tem 8 abas (Table 1..8) — deixe todas selecionadas
+        "header": 0,
+        "usar_valor": True,
+        "passos": [
+            "Golden Art tem várias abas (Table 1..8) — deixe **todas** selecionadas.",
+            "O preço fica separado: 'R$' numa coluna e o número em outra.",
+            "Marque a **coluna com o VALOR numérico** (opção já ativada).",
+            "Confira as colunas de Código e Preço — o layout varia entre abas.",
+            "Preencha o IPI (%) à mão, se houver.",
+        ],
+        "observacao": "Layout irregular: confirme código/preço manualmente antes de processar.",
+    },
+    "Outro / configurar manualmente": {
+        "manual": True,
+        "passos": [
+            "Fornecedor sem receita pronta: configure os campos manualmente.",
+            "Escolha a aba, a linha do cabeçalho, as colunas de código e preço.",
+            "Marque as opções de compatibilização conforme a planilha.",
+        ],
+    },
+}
 
 # ─── Header ───────────────────────────────────────────────────────────────────
 st.title("💰 Atualização de Custos")
@@ -86,15 +191,78 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ─── Seletor de fornecedor (receita) ──────────────────────────────────────────
+# A pessoa escolhe o fornecedor e o app pré-configura aba, cabeçalho, colunas e
+# opções. Isso deixa claro para outras equipes o que usar em cada fornecedor.
+st.markdown('<div class="section-header">🏷️ Qual é o fornecedor?</div>', unsafe_allow_html=True)
+
+nomes_receitas = list(RECEITAS.keys())
+fornecedor_receita = st.selectbox(
+    "Escolha o fornecedor para pré-configurar as opções",
+    options=nomes_receitas,
+    index=len(nomes_receitas) - 1,  # padrão: "Outro / configurar manualmente"
+    help="Selecionar um fornecedor conhecido preenche automaticamente a aba, o "
+         "cabeçalho, as colunas e as opções corretas.",
+)
+
+receita = RECEITAS[fornecedor_receita]
+
+# Passo a passo da receita
+passos_html = "".join(f"<li>{p}</li>" for p in receita.get("passos", []))
+obs = receita.get("observacao")
+obs_html = f'<div style="margin-top:0.4rem;color:#b45309;">⚠️ {obs}</div>' if obs else ""
+st.markdown(
+    f'<div class="info-box"><strong>Passo a passo — {fornecedor_receita}</strong>'
+    f'<ol style="margin:0.4rem 0 0 1rem;padding:0;">{passos_html}</ol>{obs_html}</div>',
+    unsafe_allow_html=True,
+)
+
+
+def aplicar_receita(rec, abas_disponiveis):
+    """Grava no session_state os valores dos widgets conforme a receita."""
+    # Abas
+    if rec.get("aba") and rec["aba"] in abas_disponiveis:
+        st.session_state["k_abas"] = [rec["aba"]]
+    else:
+        st.session_state["k_abas"] = list(abas_disponiveis)
+    # Linha do cabeçalho
+    if "header" in rec:
+        st.session_state["k_header"] = int(rec["header"])
+    # Opções (marcar só as da receita; desmarcar as demais)
+    st.session_state["k_normalizar"] = bool(rec.get("normalizar", False))
+    st.session_state["k_concatenar"] = bool(rec.get("concatenar", False))
+    st.session_state["k_usar_valor"] = bool(rec.get("usar_valor", False))
+    st.session_state["k_ipi_prod"] = bool(rec.get("ipi_por_produto", False))
+    st.session_state["k_agregar"] = bool(rec.get("agregar_acabamentos", False))
+    # Colunas alvo (guardadas para aplicar após ler o cabeçalho)
+    st.session_state["_receita_cols"] = {
+        "codigo": rec.get("codigo"),
+        "preco": rec.get("preco"),
+        "segunda_col": rec.get("segunda_col"),
+        "ipi_col": rec.get("ipi_col"),
+    }
+    st.session_state["_receita_aplicada"] = True
+
+
+if not receita.get("manual"):
+    if st.button(f"✨ Aplicar configuração de {fornecedor_receita}", use_container_width=True):
+        aplicar_receita(receita, nomes_abas)
+        st.rerun()
+
 # ─── Seleção das abas a processar ─────────────────────────────────────────────
 # Alguns fornecedores (ex: Rosa Maria) têm várias abas, e só uma contém os
 # produtos (as outras são markup, descritivo, etc.). Por isso o usuário escolhe
 # quais abas processar. Por padrão, todas ficam selecionadas (mantém o
 # comportamento de fornecedores que concatenam múltiplas abas de produtos).
+if "k_abas" not in st.session_state:
+    st.session_state["k_abas"] = list(nomes_abas)
+# Remover abas que não existem neste arquivo (ex: ao trocar de planilha)
+st.session_state["k_abas"] = [a for a in st.session_state["k_abas"] if a in nomes_abas] or list(nomes_abas)
+
 abas_escolhidas = st.multiselect(
     "📑 Abas a processar (a 1ª selecionada define as colunas)",
     options=nomes_abas,
-    default=nomes_abas,
+    key="k_abas",
     help="Se a planilha tiver abas que não são de produtos (ex: Rosa Maria: 'Markup', "
          "'DESCRITIVO'), deixe marcada apenas a aba com a tabela de produtos "
          "(ex: 'Tabela 2026').",
@@ -116,11 +284,13 @@ st.markdown('<div class="section-header">⚙️ Configuração</div>', unsafe_al
 col1, col2 = st.columns(2)
 
 with col1:
+    if "k_header" not in st.session_state:
+        st.session_state["k_header"] = 1
     linha_header = st.number_input(
         "Linha do cabeçalho (0 = primeira linha)",
         min_value=0,
         max_value=max(len(df_raw) - 1, 0),
-        value=1,
+        key="k_header",
         help="Indique em qual linha estão os nomes das colunas",
     )
 
@@ -154,11 +324,33 @@ with col2:
 
 col3, col4, col5, col6 = st.columns(4)
 
+# Colunas sugeridas pela receita (aplicadas após o cabeçalho ser lido)
+_rc = st.session_state.get("_receita_cols", {}) if st.session_state.get("_receita_aplicada") else {}
+
+
+def _indice_col(nome_alvo, colunas, padrao=0):
+    """Índice de 'nome_alvo' em 'colunas' (comparando sem quebras/espaços). Senão, padrao."""
+    if not nome_alvo:
+        return padrao
+    alvo = str(nome_alvo).strip().replace("\n", " ").lower()
+    for i, c in enumerate(colunas):
+        if str(c).strip().replace("\n", " ").lower() == alvo:
+            return i
+    return padrao
+
 with col3:
-    col_codigo = st.selectbox("Coluna do CÓDIGO", options=colunas_forn)
+    col_codigo = st.selectbox(
+        "Coluna do CÓDIGO",
+        options=colunas_forn,
+        index=_indice_col(_rc.get("codigo"), colunas_forn, 0),
+    )
 
 with col4:
-    col_preco = st.selectbox("Coluna do PREÇO", options=colunas_forn)
+    col_preco = st.selectbox(
+        "Coluna do PREÇO",
+        options=colunas_forn,
+        index=_indice_col(_rc.get("preco"), colunas_forn, min(1, len(colunas_forn) - 1)),
+    )
 
 with col5:
     ipi = st.number_input("IPI (%)", min_value=0.0, max_value=100.0, value=0.0, step=0.25)
@@ -166,12 +358,17 @@ with col5:
 # ─── Opções avançadas ─────────────────────────────────────────────────────────
 st.markdown('<div class="section-header">🔧 Opções de compatibilização</div>', unsafe_allow_html=True)
 
+# Inicializa as flags de opção no session_state (padrão desmarcado)
+for _k in ["k_normalizar", "k_concatenar", "k_usar_valor", "k_ipi_prod", "k_agregar"]:
+    if _k not in st.session_state:
+        st.session_state[_k] = False
+
 col_opt1, col_opt2, col_opt3 = st.columns(3)
 
 with col_opt1:
     normalizar_codigos = st.checkbox(
         "🔄 Normalizar códigos (remover acabamentos e hifens)",
-        value=False,
+        key="k_normalizar",
         help="Ex: Revoluz envia 'RI-H54414-1-BFM OU PTO' e no DOit é 'RI-H54414-1'. "
              "Remove sufixos de acabamento e hifens para compatibilizar. "
              "Usar com: Revoluz, Revolux e similares.",
@@ -180,7 +377,7 @@ with col_opt1:
 with col_opt2:
     concatenar_colunas = st.checkbox(
         "🔗 Concatenar colunas para formar código",
-        value=False,
+        key="k_concatenar",
         help="Ex: Spotline tem ID=84 e Descrição='385/2 PLAFON SMART...', no DOit é 'SL-84-385-2'. "
              "Junta o ID + primeira palavra da descrição para formar o código completo. "
              "Usar com: Spotline.",
@@ -189,7 +386,7 @@ with col_opt2:
 with col_opt3:
     usar_col_valor = st.checkbox(
         "💲 Valor em coluna separada",
-        value=False,
+        key="k_usar_valor",
         help="Ex: Golden Art tem 'R$' em uma coluna e o valor numérico em outra. "
              "Selecione a coluna com o número após ativar. "
              "Usar com: Golden Art.",
@@ -200,7 +397,7 @@ col_opt4, col_opt5, _col_opt6 = st.columns(3)
 with col_opt4:
     usar_ipi_por_produto = st.checkbox(
         "📊 IPI por produto (coluna da planilha)",
-        value=False,
+        key="k_ipi_prod",
         help="Ex: Stella traz o IPI de cada item na coluna '% IPI'. "
              "Ativa o uso do IPI de cada linha no lugar do IPI fixo acima. "
              "Linhas sem IPI usam o IPI fixo como fallback. "
@@ -210,7 +407,7 @@ with col_opt4:
 with col_opt5:
     agregar_acabamentos = st.checkbox(
         "🧩 Código com acabamentos em linhas (usar maior preço)",
-        value=False,
+        key="k_agregar",
         help="Ex: Rosa Maria repete a referência numa linha e deixa a linha seguinte "
              "em branco com o preço do outro acabamento. Preenche o código para baixo "
              "e usa o MAIOR preço por referência. Usar com: Rosa Maria.",
@@ -218,13 +415,18 @@ with col_opt5:
 
 col_valor_separado = None
 if usar_col_valor:
-    col_valor_separado = st.selectbox("Coluna com o VALOR numérico", options=colunas_forn)
+    col_valor_separado = st.selectbox(
+        "Coluna com o VALOR numérico",
+        options=colunas_forn,
+        index=_indice_col(_rc.get("preco"), colunas_forn, 0),
+    )
 
 col_ipi_produto = None
 if usar_ipi_por_produto:
     col_ipi_produto = st.selectbox(
         "Coluna com o % de IPI por produto",
         options=colunas_forn,
+        index=_indice_col(_rc.get("ipi_col"), colunas_forn, 0),
         help="Ex: Stella → coluna '% IPI'. Aceita valores como 9.75, '9,75%' ou 0,0975.",
     )
 
@@ -233,8 +435,13 @@ if concatenar_colunas:
     col_concat_segunda = st.selectbox(
         "Segunda coluna (será extraída a primeira palavra e concatenada ao código)",
         options=colunas_forn,
+        index=_indice_col(_rc.get("segunda_col"), colunas_forn, 0),
         help="A primeira palavra desta coluna será unida ao código com hífen. Ex: ID=84, Descrição='385/2 PLAFON...' → 84-385-2",
     )
+
+# A receita já foi aplicada aos widgets deste rerun; consumir a flag para que o
+# usuário possa ajustar os campos manualmente sem que voltem ao valor da receita.
+st.session_state["_receita_aplicada"] = False
 
 # ─── Seleção do fabricante ────────────────────────────────────────────────────
 fabricantes_doit = (
@@ -634,6 +841,12 @@ if st.session_state.get("processado", False):
     st.divider()
     st.markdown('<div class="section-header">📝 Registro (planilha de controle)</div>', unsafe_allow_html=True)
 
+    st.link_button(
+        "🔗 Abrir planilha de controle (Google Sheets)",
+        URL_PLANILHA_CONTROLE,
+        use_container_width=True,
+    )
+
     col_reg1, col_reg2 = st.columns(2)
 
     with col_reg1:
@@ -670,5 +883,8 @@ if st.session_state.get("processado", False):
         "Copie e cole na planilha de controle (Sheets):",
         value=linha_sheets,
         height=80,
-        help="Selecione tudo, copie (Ctrl+C) e cole na próxima linha da planilha do Google Sheets.",
+        help="Selecione tudo, copie (Ctrl+C), abra a planilha pelo botão acima e "
+             "cole na próxima linha vazia do Google Sheets.",
     )
+
+    st.caption(f"📋 Planilha de controle: {URL_PLANILHA_CONTROLE}")
