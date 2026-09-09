@@ -45,9 +45,17 @@ CAMINHO_DOIT = "ListagemdeProdutos DOit.xlsx"
 URL_PLANILHA_CONTROLE = "https://docs.google.com/spreadsheets/d/11N3sHupQLe4FjITXUvhvGdx6Sf_ZosB_PG7xGuP1PUo/edit?pli=1&gid=0#gid=0"
 
 
+CAMINHO_DOIT_PARQUET = "ListagemdeProdutos DOit.parquet"
+
+
 @st.cache_data
 def carregar_doit():
-    df = pd.read_excel(CAMINHO_DOIT)
+    # Parquet é ~20x mais rápido de ler que Excel; usamos quando disponível para
+    # acelerar o "acordar" do app. Cai para o Excel se o Parquet não existir.
+    if os.path.exists(CAMINHO_DOIT_PARQUET):
+        df = pd.read_parquet(CAMINHO_DOIT_PARQUET, engine="pyarrow")
+    else:
+        df = pd.read_excel(CAMINHO_DOIT)
     df["# Referência"] = df["# Referência"].astype(str).str.strip()
     # Muitas referências do DOit vêm como "CÓDIGO | 394" (código + id interno).
     # Guardamos a parte antes do " | " para cruzar com o código puro do fornecedor.
@@ -59,8 +67,9 @@ def carregar_doit():
 
 def data_atualizacao_doit():
     """Data da última modificação do arquivo da base DOit (dd/mm/aaaa) ou None."""
+    caminho = CAMINHO_DOIT_PARQUET if os.path.exists(CAMINHO_DOIT_PARQUET) else CAMINHO_DOIT
     try:
-        ts = os.path.getmtime(CAMINHO_DOIT)
+        ts = os.path.getmtime(caminho)
         return datetime.fromtimestamp(ts).strftime("%d/%m/%Y")
     except OSError:
         return None
