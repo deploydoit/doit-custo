@@ -1,6 +1,7 @@
 import streamlit as st
+import os
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 
 # ─── Configuração da página ───────────────────────────────────────────────────
@@ -54,6 +55,15 @@ def carregar_doit():
         df["# Referência"].str.split(r"\s*\|\s*", n=1, regex=True).str[0].str.strip()
     )
     return df
+
+
+def data_atualizacao_doit():
+    """Data da última modificação do arquivo da base DOit (dd/mm/aaaa) ou None."""
+    try:
+        ts = os.path.getmtime(CAMINHO_DOIT)
+        return datetime.fromtimestamp(ts).strftime("%d/%m/%Y")
+    except OSError:
+        return None
 
 
 try:
@@ -172,7 +182,9 @@ RECEITAS = {
 
 # ─── Header ───────────────────────────────────────────────────────────────────
 st.title("💰 Atualização de Custos")
-st.markdown(f'<div class="info-box">📦 Base DOit carregada com <strong>{len(df_doit):,}</strong> produtos | {df_doit["Fabricante"].nunique()} fabricantes</div>', unsafe_allow_html=True)
+_data_doit = data_atualizacao_doit()
+_txt_data = f' | 🗓️ atualizada em <strong>{_data_doit}</strong>' if _data_doit else ""
+st.markdown(f'<div class="info-box">📦 Base DOit carregada com <strong>{len(df_doit):,}</strong> produtos | {df_doit["Fabricante"].nunique()} fabricantes{_txt_data}</div>', unsafe_allow_html=True)
 
 # ─── Upload ───────────────────────────────────────────────────────────────────
 st.divider()
