@@ -45,6 +45,11 @@ CAMINHO_DOIT = "ListagemdeProdutos DOit.xlsx"
 def carregar_doit():
     df = pd.read_excel(CAMINHO_DOIT)
     df["# Referência"] = df["# Referência"].astype(str).str.strip()
+    # Muitas referências do DOit vêm como "CÓDIGO | 394" (código + id interno).
+    # Guardamos a parte antes do " | " para cruzar com o código puro do fornecedor.
+    df["_ref_base"] = (
+        df["# Referência"].str.split(r"\s*\|\s*", n=1, regex=True).str[0].str.strip()
+    )
     return df
 
 
@@ -81,9 +86,27 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-df_raw = todas_abas[nomes_abas[0]]
+# ─── Seleção das abas a processar ─────────────────────────────────────────────
+# Alguns fornecedores (ex: Rosa Maria) têm várias abas, e só uma contém os
+# produtos (as outras são markup, descritivo, etc.). Por isso o usuário escolhe
+# quais abas processar. Por padrão, todas ficam selecionadas (mantém o
+# comportamento de fornecedores que concatenam múltiplas abas de produtos).
+abas_escolhidas = st.multiselect(
+    "📑 Abas a processar (a 1ª selecionada define as colunas)",
+    options=nomes_abas,
+    default=nomes_abas,
+    help="Se a planilha tiver abas que não são de produtos (ex: Rosa Maria: 'Markup', "
+         "'DESCRITIVO'), deixe marcada apenas a aba com a tabela de produtos "
+         "(ex: 'Tabela 2026').",
+)
 
-with st.expander("👁️ Pré-visualização (primeiras 15 linhas)", expanded=False):
+if not abas_escolhidas:
+    st.warning("Selecione ao menos uma aba para processar.")
+    st.stop()
+
+df_raw = todas_abas[abas_escolhidas[0]]
+
+with st.expander("👁️ Pré-visualização (primeiras 15 linhas da 1ª aba selecionada)", expanded=False):
     st.dataframe(df_raw.head(15), use_container_width=True)
 
 # ─── Configuração ────────────────────────────────────────────────────────────
@@ -96,21 +119,21 @@ with col1:
     linha_header = st.number_input(
         "Linha do cabeçalho (0 = primeira linha)",
         min_value=0,
-        max_value=len(df_raw) - 1,
+        max_value=max(len(df_raw) - 1, 0),
         value=1,
         help="Indique em qual linha estão os nomes das colunas",
     )
 
-# Recarregar todas as abas com header correto e concatenar
+# Recarregar as abas selecionadas com header correto e concatenar
 dfs_abas = []
-df_primeira = pd.read_excel(arquivo_fornecedor, header=int(linha_header), sheet_name=nomes_abas[0])
+df_primeira = pd.read_excel(arquivo_fornecedor, header=int(linha_header), sheet_name=abas_escolhidas[0])
 df_primeira.columns = [str(c).strip() for c in df_primeira.columns]
-df_primeira["_aba_origem"] = nomes_abas[0]
+df_primeira["_aba_origem"] = abas_escolhidas[0]
 dfs_abas.append(df_primeira)
 
 colunas_base = df_primeira.columns.drop("_aba_origem")
 
-for nome_aba in nomes_abas[1:]:
+for nome_aba in abas_escolhidas[1:]:
     df_aba = pd.read_excel(arquivo_fornecedor, header=None, sheet_name=nome_aba)
     if len(df_aba.columns) >= len(colunas_base):
         df_aba = df_aba.iloc[:, :len(colunas_base)]
@@ -172,9 +195,38 @@ with col_opt3:
              "Usar com: Golden Art.",
     )
 
+col_opt4, col_opt5, _col_opt6 = st.columns(3)
+
+with col_opt4:
+    usar_ipi_por_produto = st.checkbox(
+        "📊 IPI por produto (coluna da planilha)",
+        value=False,
+        help="Ex: Stella traz o IPI de cada item na coluna '% IPI'. "
+             "Ativa o uso do IPI de cada linha no lugar do IPI fixo acima. "
+             "Linhas sem IPI usam o IPI fixo como fallback. "
+             "Usar com: Stella.",
+    )
+
+with col_opt5:
+    agregar_acabamentos = st.checkbox(
+        "🧩 Código com acabamentos em linhas (usar maior preço)",
+        value=False,
+        help="Ex: Rosa Maria repete a referência numa linha e deixa a linha seguinte "
+             "em branco com o preço do outro acabamento. Preenche o código para baixo "
+             "e usa o MAIOR preço por referência. Usar com: Rosa Maria.",
+    )
+
 col_valor_separado = None
 if usar_col_valor:
     col_valor_separado = st.selectbox("Coluna com o VALOR numérico", options=colunas_forn)
+
+col_ipi_produto = None
+if usar_ipi_por_produto:
+    col_ipi_produto = st.selectbox(
+        "Coluna com o % de IPI por produto",
+        options=colunas_forn,
+        help="Ex: Stella → coluna '% IPI'. Aceita valores como 9.75, '9,75%' ou 0,0975.",
+    )
 
 col_concat_segunda = None
 if concatenar_colunas:
@@ -237,6 +289,31 @@ def parse_preco(valor):
         return None
 
 
+def parse_ipi(valor):
+    """Converte o IPI de uma célula em percentual (ex: 9.75 -> 9.75).
+
+    Aceita formatos como 9.75, '9,75', '9,75%' e frações como 0,0975 (→ 9.75).
+    Retorna None quando não há valor válido.
+    """
+    if pd.isna(valor):
+        return None
+    s = str(valor).strip().replace("%", "").replace(" ", "")
+    if not s or s.lower() == "nan":
+        return None
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    try:
+        v = float(s)
+    except ValueError:
+        return None
+    if v < 0:
+        return None
+    # Se veio como fração (ex: 0,0975), converter para percentual
+    if 0 < v < 1:
+        v *= 100
+    return v
+
+
 # ─── Processamento ────────────────────────────────────────────────────────────
 st.divider()
 st.markdown('<div class="section-header">🔄 Processamento</div>', unsafe_allow_html=True)
@@ -246,6 +323,20 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
     df_forn["_codigo_limpo"] = df_forn[col_codigo].astype(str).str.strip()
     # Remover .0 de números inteiros lidos como float (ex: 9766.0 -> 9766)
     df_forn["_codigo_limpo"] = df_forn["_codigo_limpo"].str.replace(r"\.0$", "", regex=True)
+
+    # Código com acabamentos em linhas (ex: Rosa Maria): a referência aparece só na
+    # 1ª linha e a linha seguinte fica em branco com o preço do outro acabamento.
+    # Preenche o código para baixo (ffill) para que ambas as linhas apontem para a
+    # mesma referência. O "maior preço por referência" é resolvido no dedupe abaixo.
+    if agregar_acabamentos:
+        df_forn["_codigo_limpo"] = df_forn["_codigo_limpo"].replace(
+            {"nan": pd.NA, "": pd.NA, "None": pd.NA}
+        ).ffill()
+        df_forn["_codigo_limpo"] = df_forn["_codigo_limpo"].fillna("").astype(str).str.strip()
+
+    # IPI por produto (ex: Stella): guardar o IPI de cada linha
+    if usar_ipi_por_produto and col_ipi_produto:
+        df_forn["_ipi_produto"] = df_forn[col_ipi_produto].apply(parse_ipi)
 
     # Concatenar colunas se ativado (ex: Spotline: ID + primeira palavra da descrição)
     if concatenar_colunas and col_concat_segunda:
@@ -269,6 +360,17 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
         (df_forn_valido["_codigo_limpo"] != "nan")
         & (df_forn_valido["_codigo_limpo"] != "")
     ]
+
+    # Colunas extras a carregar no merge (além de código e preço)
+    colunas_extra_merge = []
+    if usar_ipi_por_produto and col_ipi_produto and "_ipi_produto" in df_forn_valido.columns:
+        colunas_extra_merge.append("_ipi_produto")
+
+    # Rosa Maria: com o código preenchido para baixo, a mesma referência tem 2 preços
+    # (um por acabamento). Ordenar por preço decrescente faz o dedupe (keep="first")
+    # manter o MAIOR preço por referência — e o IPI da linha correspondente.
+    if agregar_acabamentos:
+        df_forn_valido = df_forn_valido.sort_values("_preco_limpo", ascending=False)
 
     # Normalização de códigos (se ativada)
     if normalizar_codigos:
@@ -303,15 +405,15 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
             lambda x: normalizar(remover_acabamento(x))
         )
 
-        # Normalizar referências do DOit: remover hifens (usar cópia para não alterar cache)
+        # Normalizar referências do DOit a partir da base (sem o sufixo " | 394")
         df_doit_norm = df_doit.copy()
-        df_doit_norm["_ref_norm"] = df_doit_norm["# Referência"].apply(normalizar)
+        df_doit_norm["_ref_norm"] = df_doit_norm["_ref_base"].apply(normalizar)
 
         # Cruzar usando códigos normalizados
         df_forn_unico = df_forn_valido.drop_duplicates(subset=["_codigo_norm"], keep="first")
 
         df_merge = df_doit_norm.merge(
-            df_forn_unico[["_codigo_norm", "_preco_limpo", "_codigo_limpo"]],
+            df_forn_unico[["_codigo_norm", "_preco_limpo", "_codigo_limpo"] + colunas_extra_merge],
             left_on="_ref_norm",
             right_on="_codigo_norm",
             how="inner",
@@ -327,14 +429,14 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
         df_forn_unico = df_forn_valido.drop_duplicates(subset=["_codigo_limpo"], keep="first")
 
         df_merge = df_doit.merge(
-            df_forn_unico[["_codigo_limpo", "_preco_limpo"]],
-            left_on="# Referência",
+            df_forn_unico[["_codigo_limpo", "_preco_limpo"] + colunas_extra_merge],
+            left_on="_ref_base",
             right_on="_codigo_limpo",
             how="inner",
         )
 
         # Produtos do fornecedor que NÃO estão no DOit (precisam ser criados)
-        refs_doit = set(df_doit["# Referência"].astype(str).str.strip())
+        refs_doit = set(df_doit["_ref_base"].astype(str).str.strip())
         mask_nao_encontrado = ~df_forn_valido["_codigo_limpo"].isin(refs_doit)
         df_precisam_criar = df_forn_valido[mask_nao_encontrado].copy()
 
@@ -342,6 +444,10 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
     st.session_state["df_merge_raw"] = df_merge
     st.session_state["df_forn_valido"] = df_forn_valido
     st.session_state["df_precisam_criar"] = df_precisam_criar
+    st.session_state["ipi_fixo"] = ipi
+    st.session_state["usar_ipi_por_produto"] = bool(
+        usar_ipi_por_produto and col_ipi_produto and "_ipi_produto" in df_merge.columns
+    )
     st.session_state["processado"] = True
 
 # ─── Resultados ───────────────────────────────────────────────────────────────
@@ -361,11 +467,24 @@ if st.session_state.get("processado", False):
     ].copy()
 
     # ─── Cálculos ─────────────────────────────────────────────────────────────
-    ipi_fator = 1 + (ipi / 100)
+    ipi_fixo = st.session_state.get("ipi_fixo", ipi)
+    usar_ipi_col = st.session_state.get("usar_ipi_por_produto", False)
 
     if not df_merge.empty:
         df_merge["_custo_liquido"] = (df_merge["_preco_limpo"] * 1.10).round(2)
-        df_merge["_custo_bruto"] = (df_merge["_custo_liquido"] * ipi_fator).round(2)
+
+        if usar_ipi_col and "_ipi_produto" in df_merge.columns:
+            # IPI por produto: usa o IPI de cada linha; linhas sem IPI caem no IPI fixo
+            ipi_linha = df_merge["_ipi_produto"].fillna(ipi_fixo)
+            df_merge["_ipi_aplicado"] = ipi_linha
+            df_merge["_custo_bruto"] = (
+                df_merge["_custo_liquido"] * (1 + ipi_linha / 100)
+            ).round(2)
+        else:
+            df_merge["_ipi_aplicado"] = ipi_fixo
+            df_merge["_custo_bruto"] = (
+                df_merge["_custo_liquido"] * (1 + ipi_fixo / 100)
+            ).round(2)
 
     # ─── Métricas ─────────────────────────────────────────────────────────────
     st.divider()
@@ -375,7 +494,8 @@ if st.session_state.get("processado", False):
     col_m1.metric("✅ Atualizados", f"{len(df_merge):,}")
     col_m2.metric("🆕 Precisam ser criados", f"{len(df_precisam_criar):,}")
     col_m3.metric("⚠️ Não atualizados", f"{len(df_nao_atualizados):,}")
-    col_m4.metric("📦 IPI", f"{ipi}%")
+    ipi_label = "Por produto" if usar_ipi_col else f"{ipi_fixo}%"
+    col_m4.metric("📦 IPI", ipi_label)
 
     # ─── Modelo Custo ─────────────────────────────────────────────────────────
     hoje = date.today().strftime("%d/%m/%Y")
@@ -401,7 +521,7 @@ if st.session_state.get("processado", False):
     # ─── Relatório ────────────────────────────────────────────────────────────
     if not df_merge.empty:
         df_produtos_doit = df_merge.drop(
-            columns=["_codigo_limpo", "_preco_limpo", "_custo_liquido", "_custo_bruto", "_codigo_norm", "_ref_norm", "_segunda_parte"],
+            columns=["_codigo_limpo", "_preco_limpo", "_custo_liquido", "_custo_bruto", "_codigo_norm", "_ref_norm", "_ref_base", "_segunda_parte", "_ipi_produto", "_ipi_aplicado"],
             errors="ignore",
         )
     else:
@@ -409,11 +529,11 @@ if st.session_state.get("processado", False):
 
     df_forn_valido = st.session_state["df_forn_valido"]
     df_produtos_forn = df_forn_valido.drop(
-        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte"], errors="ignore"
+        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
     )
 
     df_criar_saida = df_precisam_criar.drop(
-        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte"], errors="ignore"
+        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
     )
 
     # ─── Tabs de visualização ─────────────────────────────────────────────────
@@ -522,7 +642,10 @@ if st.session_state.get("processado", False):
         dificuldade = st.selectbox("Dificuldade", options=["Fácil", "Médio", "Fácil/Médio", "Médio/Difícil", "Difícil"])
 
     with col_reg2:
-        ipi_texto = f"{ipi}" if ipi > 0 else "Não tem"
+        if usar_ipi_col:
+            ipi_texto = "Por produto"
+        else:
+            ipi_texto = f"{ipi_fixo}" if ipi_fixo > 0 else "Não tem"
         muitas_abas = "TRUE" if len(nomes_abas) > 1 else "FALSE"
         formulas_usadas = st.text_input("Fórmulas/Observações", value="", placeholder="Ex: Procv e ses junto")
         colunas_usar = st.text_input("Colunas usadas", value="", placeholder="Ex: Referência, Prç.ven, ICMS e IPI")

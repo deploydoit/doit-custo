@@ -3,3 +3,10 @@ __pycache__/
 .env
 venv/
 .streamlit/secrets.toml
+
+# macOS
+.DS_Store
+
+# Planilhas de trabalho (não são necessárias para o app publicado)
+Fornecedores/
+Exemplos-feitos/
