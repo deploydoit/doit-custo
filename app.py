@@ -80,6 +80,7 @@ RECEITAS = {
         "preco": "Prç.ven",
         "ipi_por_produto": True,
         "ipi_col": "% IPI",
+        "fab_id": 7586,
         "passos": [
             "Cabeçalho na linha 0 (primeira linha).",
             "Código = coluna **Referência** · Preço = coluna **Prç.ven**.",
@@ -93,6 +94,7 @@ RECEITAS = {
         "codigo": "REFERÊNCIA",
         "preco": "PREÇO",
         "agregar_acabamentos": True,
+        "fab_id": 7603,
         "passos": [
             "Use apenas a aba **Tabela 2026** (as outras são markup/descritivo).",
             "Cabeçalho na linha 1.",
@@ -107,6 +109,7 @@ RECEITAS = {
         "codigo": "Produto",
         "preco": "Valor\nUnitário",
         "normalizar": True,
+        "fab_id": 7684,
         "passos": [
             "Cabeçalho na linha 1.",
             "Código = coluna **Produto** · Preço = coluna **Valor Unitário**.",
@@ -120,6 +123,7 @@ RECEITAS = {
         "codigo": "Produto",
         "preco": "Valor\nUnitário",
         "normalizar": True,
+        "fab_id": 7684,
         "passos": [
             "Cabeçalho na linha 1.",
             "Código = coluna **Produto** · Preço = coluna **Valor Unitário**.",
@@ -134,6 +138,7 @@ RECEITAS = {
         "preco": "PREÇO",
         "concatenar": True,
         "segunda_col": "DESCRIÇÃO",
+        "fab_id": 7629,
         "passos": [
             "Cabeçalho na linha 0.",
             "Código = coluna **ID** · Preço = coluna **PREÇO**.",
@@ -145,6 +150,7 @@ RECEITAS = {
         "aba": None,  # tem 8 abas (Table 1..8) — deixe todas selecionadas
         "header": 0,
         "usar_valor": True,
+        "fab_id": 7583,
         "passos": [
             "Golden Art tem várias abas (Table 1..8) — deixe **todas** selecionadas.",
             "O preço fica separado: 'R$' numa coluna e o número em outra.",
@@ -241,6 +247,8 @@ def aplicar_receita(rec, abas_disponiveis):
         "segunda_col": rec.get("segunda_col"),
         "ipi_col": rec.get("ipi_col"),
     }
+    # Fabricante do DOit sugerido pela receita (casado por ID)
+    st.session_state["_receita_fab_id"] = rec.get("fab_id")
     st.session_state["_receita_aplicada"] = True
 
 
@@ -458,10 +466,23 @@ fabricantes_doit["_label"] = (
     + ")"
 )
 
+# Pré-selecionar o fabricante sugerido pela receita (casando pelo ID do DOit)
+_labels_fab = fabricantes_doit["_label"].tolist()
+_idx_fab = 0
+_fab_id_receita = st.session_state.get("_receita_fab_id")
+if _fab_id_receita is not None:
+    _match = fabricantes_doit.index[
+        fabricantes_doit["Id do Fabricante"].astype("Int64") == int(_fab_id_receita)
+    ].tolist()
+    if _match:
+        _idx_fab = int(_match[0])
+
 fabricante_escolhido = st.selectbox(
     "🏭 Fabricante no DOit",
-    options=fabricantes_doit["_label"].tolist(),
-    help="Selecione o fabricante cadastrado no DOit correspondente a esta planilha.",
+    options=_labels_fab,
+    index=_idx_fab,
+    help="Selecione o fabricante cadastrado no DOit correspondente a esta planilha. "
+         "Ao aplicar a configuração de um fornecedor, ele já vem pré-selecionado.",
 )
 
 idx_selecionado = fabricantes_doit["_label"].tolist().index(fabricante_escolhido)
