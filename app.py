@@ -747,21 +747,33 @@ if st.session_state.get("processado", False):
     col_m4.metric("📦 IPI", ipi_label)
 
     # ─── Modelo Custo ─────────────────────────────────────────────────────────
-    hoje = date.today().strftime("%d/%m/%Y")
+    # Data como datetime nativo (não string) para o Excel reconhecer como data.
+    hoje_dt = pd.Timestamp(date.today())
+
+    def _texto_id(serie):
+        """SKU/FORNECEDOR como texto, sem '.0' e preservando zeros à esquerda."""
+        return (
+            serie.astype(str)
+            .str.replace(r"\.0$", "", regex=True)
+            .str.strip()
+            .replace({"nan": "", "None": ""})
+        )
 
     if not df_merge.empty:
         df_modelo_custo = pd.DataFrame(
             {
-                "SKU": df_merge["SKU"].fillna(0).astype(int).astype(str),
-                "FORNECEDOR": df_merge["Id do Fabricante"].fillna(0).astype(int).astype(str),
+                # Texto para não perder zeros à esquerda (a coluna vai formatada como texto no Excel)
+                "SKU": _texto_id(df_merge["SKU"]),
+                "FORNECEDOR": _texto_id(df_merge["Id do Fabricante"]),
                 "NOME ORIGINAL": "",
                 "PART NUMBER": "",
                 "CONDIÇÃO": "DDP",
-                "CUSTO": df_merge["_custo_bruto"].apply(lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+                # Números nativos (float) para o Excel tratar como número
+                "CUSTO": df_merge["_custo_bruto"].astype(float).round(2),
                 "MOEDA": "BRL",
                 "CUSTO FINAL?": "",
-                "CUSTO LÍQUIDO": df_merge["_custo_liquido"].apply(lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-                "MODIFICADO EM": hoje,
+                "CUSTO LÍQUIDO": df_merge["_custo_liquido"].astype(float).round(2),
+                "MODIFICADO EM": hoje_dt,
             }
         )
     else:
@@ -842,10 +854,39 @@ if st.session_state.get("processado", False):
 
     col_dl1, col_dl2 = st.columns(2)
 
+    def escrever_modelo_custo(writer, df_modelo, sheet_name="Modelo Custo"):
+        """Escreve a aba Modelo Custo aplicando os formatos que o DOit espera:
+        SKU/FORNECEDOR como texto (preserva zero à esquerda), CUSTO/CUSTO LÍQUIDO
+        como número e MODIFICADO EM como data."""
+        df_modelo.to_excel(writer, index=False, sheet_name=sheet_name)
+        if df_modelo.empty:
+            return
+        wb = writer.book
+        ws = writer.sheets[sheet_name]
+        fmt_texto = wb.add_format({"num_format": "@"})           # texto
+        fmt_num = wb.add_format({"num_format": "0.00"})           # número 2 casas
+        fmt_data = wb.add_format({"num_format": "yyyy-mm-dd"})    # data ISO
+        cols = list(df_modelo.columns)
+
+        def _ci(nome):
+            return cols.index(nome) if nome in cols else None
+
+        for nome in ["SKU", "FORNECEDOR"]:
+            i = _ci(nome)
+            if i is not None:
+                ws.set_column(i, i, 14, fmt_texto)
+        for nome in ["CUSTO", "CUSTO LÍQUIDO"]:
+            i = _ci(nome)
+            if i is not None:
+                ws.set_column(i, i, 12, fmt_num)
+        i = _ci("MODIFICADO EM")
+        if i is not None:
+            ws.set_column(i, i, 14, fmt_data)
+
     with col_dl1:
         buffer1 = BytesIO()
         with pd.ExcelWriter(buffer1, engine="xlsxwriter") as writer:
-            df_modelo_custo.to_excel(writer, index=False, sheet_name="Modelo Custo")
+            escrever_modelo_custo(writer, df_modelo_custo)
         buffer1.seek(0)
 
         st.download_button(
@@ -862,7 +903,7 @@ if st.session_state.get("processado", False):
             if not df_produtos_doit.empty:
                 df_produtos_doit.to_excel(writer, index=False, sheet_name="Produtos DOit")
             df_produtos_forn.to_excel(writer, index=False, sheet_name="Produtos")
-            df_modelo_custo.to_excel(writer, index=False, sheet_name="Modelo Custo")
+            escrever_modelo_custo(writer, df_modelo_custo)
             if not df_criar_saida.empty:
                 df_criar_saida.to_excel(writer, index=False, sheet_name="Precisam ser criados")
             if not df_nao_atualizados.empty:
