@@ -14,26 +14,49 @@ st.set_page_config(
 # ─── Estilo customizado ──────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .main .block-container { padding-top: 1rem; max-width: 1200px; }
-    h1 { color: #2c3e50; }
-    .stTabs [data-baseweb="tab-list"] { gap: 1.5rem; }
+    .main .block-container { padding-top: 1.2rem; max-width: 1080px; }
+    h1 { color: #1f2933; font-size: 1.7rem; }
+
+    /* Cabeçalho de seção: sóbrio, sem cores fortes */
     .section-header {
-        font-size: 1.1rem;
+        font-size: 1.05rem;
         font-weight: 600;
-        color: #2c3e50;
-        margin-bottom: 0.5rem;
+        color: #1f2933;
+        margin: 0.2rem 0 0.6rem 0;
         display: flex;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.45rem;
     }
-    .info-box {
-        background: #eef6ff;
-        border-left: 4px solid #3b82f6;
-        border-radius: 6px;
-        padding: 0.8rem 1rem;
+    .step-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.5rem; height: 1.5rem;
+        border-radius: 50%;
+        background: #e5e7eb;
+        color: #374151;
         font-size: 0.85rem;
-        color: #1e40af;
-        margin-bottom: 1rem;
+        font-weight: 700;
+    }
+
+    /* Caixa informativa neutra (cinza claro), usada com parcimônia */
+    .info-box {
+        background: #f4f5f7;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 0.7rem 0.9rem;
+        font-size: 0.85rem;
+        color: #4b5563;
+        margin-bottom: 0.8rem;
+    }
+
+    /* Abas com respiro */
+    .stTabs [data-baseweb="tab-list"] { gap: 1.2rem; }
+
+    /* Botão primário com azul discreto */
+    .stButton > button[kind="primary"] {
+        background: #2563eb;
+        border: none;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -155,13 +178,14 @@ RECEITAS = {
         "header": 0,
         "codigo": "ID",
         "preco": "PREÇO",
-        "concatenar": True,
+        "chaves_multiplas": True,
         "segunda_col": "DESCRIÇÃO",
         "fab_id": 7629,
         "passos": [
             "Cabeçalho na linha 0.",
             "Código = coluna **ID** · Preço = coluna **PREÇO**.",
-            "O código do DOit junta ID + 1ª palavra da **DESCRIÇÃO**: concatenação já marcada.",
+            "No DOit o produto pode estar pelo **ID** (ex: 9766) ou pelo **modelo** "
+            "(início da **DESCRIÇÃO**, ex: 1362/1). O app tenta casar pelos dois.",
             "Preencha o IPI (%) à mão, se houver.",
         ],
     },
@@ -192,91 +216,106 @@ RECEITAS = {
 # ─── Header ───────────────────────────────────────────────────────────────────
 st.title("💰 Atualização de Custos")
 _data_doit = data_atualizacao_doit()
-_txt_data = f' | 🗓️ atualizada em <strong>{_data_doit}</strong>' if _data_doit else ""
-st.markdown(f'<div class="info-box">📦 Base DOit carregada com <strong>{len(df_doit):,}</strong> produtos | {df_doit["Fabricante"].nunique()} fabricantes{_txt_data}</div>', unsafe_allow_html=True)
-
-# ─── Upload ───────────────────────────────────────────────────────────────────
-st.divider()
-st.markdown('<div class="section-header">📁 Upload da planilha do fornecedor</div>', unsafe_allow_html=True)
-
-arquivo_fornecedor = st.file_uploader(
-    "Arraste ou selecione a planilha (.xlsx, .xls)",
-    type=["xlsx", "xls"],
-)
-
-if arquivo_fornecedor is None:
-    st.stop()
-
-# ─── Leitura de abas ─────────────────────────────────────────────────────────
-todas_abas = pd.read_excel(arquivo_fornecedor, header=None, sheet_name=None)
-nomes_abas = list(todas_abas.keys())
-
-st.markdown(
-    f'<div class="info-box">📑 Arquivo: <strong>{arquivo_fornecedor.name}</strong> — '
-    f'{len(nomes_abas)} aba{"s" if len(nomes_abas) > 1 else ""} encontrada{"s" if len(nomes_abas) > 1 else ""} '
-    f'({", ".join(nomes_abas)})</div>',
-    unsafe_allow_html=True,
-)
-
-# ─── Seletor de fornecedor (receita) ──────────────────────────────────────────
-# A pessoa escolhe o fornecedor e o app pré-configura aba, cabeçalho, colunas e
-# opções. Isso deixa claro para outras equipes o que usar em cada fornecedor.
-st.markdown('<div class="section-header">🏷️ Qual é o fornecedor?</div>', unsafe_allow_html=True)
-
-nomes_receitas = list(RECEITAS.keys())
-fornecedor_receita = st.selectbox(
-    "Escolha o fornecedor para pré-configurar as opções",
-    options=nomes_receitas,
-    index=len(nomes_receitas) - 1,  # padrão: "Outro / configurar manualmente"
-    help="Selecionar um fornecedor conhecido preenche automaticamente a aba, o "
-         "cabeçalho, as colunas e as opções corretas.",
-)
-
-receita = RECEITAS[fornecedor_receita]
-
-# Passo a passo da receita
-passos_html = "".join(f"<li>{p}</li>" for p in receita.get("passos", []))
-obs = receita.get("observacao")
-obs_html = f'<div style="margin-top:0.4rem;color:#b45309;">⚠️ {obs}</div>' if obs else ""
-st.markdown(
-    f'<div class="info-box"><strong>Passo a passo — {fornecedor_receita}</strong>'
-    f'<ol style="margin:0.4rem 0 0 1rem;padding:0;">{passos_html}</ol>{obs_html}</div>',
-    unsafe_allow_html=True,
+_txt_data = f" · atualizada em {_data_doit}" if _data_doit else ""
+st.caption(
+    f"Base DOit: {len(df_doit):,} produtos · {df_doit['Fabricante'].nunique()} fabricantes{_txt_data}"
 )
 
 
 def aplicar_receita(rec, abas_disponiveis):
     """Grava no session_state os valores dos widgets conforme a receita."""
-    # Abas
     if rec.get("aba") and rec["aba"] in abas_disponiveis:
         st.session_state["k_abas"] = [rec["aba"]]
     else:
         st.session_state["k_abas"] = list(abas_disponiveis)
-    # Linha do cabeçalho
     if "header" in rec:
         st.session_state["k_header"] = int(rec["header"])
-    # Opções (marcar só as da receita; desmarcar as demais)
     st.session_state["k_normalizar"] = bool(rec.get("normalizar", False))
     st.session_state["k_concatenar"] = bool(rec.get("concatenar", False))
     st.session_state["k_usar_valor"] = bool(rec.get("usar_valor", False))
     st.session_state["k_ipi_prod"] = bool(rec.get("ipi_por_produto", False))
     st.session_state["k_agregar"] = bool(rec.get("agregar_acabamentos", False))
-    # Colunas alvo (guardadas para aplicar após ler o cabeçalho)
+    st.session_state["k_multichave"] = bool(rec.get("chaves_multiplas", False))
     st.session_state["_receita_cols"] = {
         "codigo": rec.get("codigo"),
         "preco": rec.get("preco"),
         "segunda_col": rec.get("segunda_col"),
         "ipi_col": rec.get("ipi_col"),
     }
-    # Fabricante do DOit sugerido pela receita (casado por ID)
     st.session_state["_receita_fab_id"] = rec.get("fab_id")
     st.session_state["_receita_aplicada"] = True
 
 
-if not receita.get("manual"):
-    if st.button(f"✨ Aplicar configuração de {fornecedor_receita}", use_container_width=True):
-        aplicar_receita(receita, nomes_abas)
-        st.rerun()
+# ─── Passo 1 · Fornecedor e planilha ──────────────────────────────────────────
+st.divider()
+st.markdown(
+    '<div class="section-header"><span class="step-badge">1</span> Fornecedor e planilha</div>',
+    unsafe_allow_html=True,
+)
+
+nomes_receitas = list(RECEITAS.keys())
+col_forn, col_up = st.columns([1, 1.3])
+
+with col_forn:
+    fornecedor_receita = st.selectbox(
+        "Fornecedor",
+        options=nomes_receitas,
+        index=len(nomes_receitas) - 1,  # padrão: "Outro / configurar manualmente"
+        key="k_fornecedor",
+        help="Ao escolher um fornecedor conhecido, o app já preenche aba, colunas, "
+             "opções e o fabricante no DOit automaticamente.",
+    )
+
+with col_up:
+    arquivo_fornecedor = st.file_uploader(
+        "Planilha do fornecedor (.xlsx, .xls)",
+        type=["xlsx", "xls"],
+    )
+
+receita = RECEITAS[fornecedor_receita]
+
+if arquivo_fornecedor is None:
+    st.info("Escolha o fornecedor e envie a planilha para começar.")
+    st.stop()
+
+# ─── Leitura de abas ─────────────────────────────────────────────────────────
+todas_abas = pd.read_excel(arquivo_fornecedor, header=None, sheet_name=None)
+nomes_abas = list(todas_abas.keys())
+
+# Aplicar a receita automaticamente quando o fornecedor selecionado ainda não
+# foi aplicado (funciona em qualquer ordem: escolher fornecedor antes ou depois
+# de enviar a planilha). Só aqui temos as abas disponíveis.
+if (
+    not receita.get("manual")
+    and st.session_state.get("_receita_aplicada_para") != fornecedor_receita
+):
+    aplicar_receita(receita, nomes_abas)
+    st.session_state["_receita_aplicada_para"] = fornecedor_receita
+    st.rerun()
+
+# Instruções do fornecedor num expander compacto (não polui a tela)
+if receita.get("passos"):
+    with st.expander(f"📋 Como preparar a {fornecedor_receita}", expanded=False):
+        for p in receita["passos"]:
+            st.markdown(f"- {p}")
+        if receita.get("observacao"):
+            st.warning(receita["observacao"])
+        if not receita.get("manual"):
+            if st.button("Aplicar configuração deste fornecedor", key="btn_reaplicar"):
+                aplicar_receita(receita, nomes_abas)
+                st.rerun()
+
+st.caption(
+    f"Arquivo: {arquivo_fornecedor.name} · "
+    f"{len(nomes_abas)} aba{'s' if len(nomes_abas) > 1 else ''} ({', '.join(nomes_abas)})"
+)
+
+# ─── Passo 2 · Conferir e processar ───────────────────────────────────────────
+st.divider()
+st.markdown(
+    '<div class="section-header"><span class="step-badge">2</span> Confira e processe</div>',
+    unsafe_allow_html=True,
+)
 
 # ─── Seleção das abas a processar ─────────────────────────────────────────────
 # Alguns fornecedores (ex: Rosa Maria) têm várias abas, e só uma contém os
@@ -289,7 +328,7 @@ if "k_abas" not in st.session_state:
 st.session_state["k_abas"] = [a for a in st.session_state["k_abas"] if a in nomes_abas] or list(nomes_abas)
 
 abas_escolhidas = st.multiselect(
-    "📑 Abas a processar (a 1ª selecionada define as colunas)",
+    "Abas a processar (a 1ª selecionada define as colunas)",
     options=nomes_abas,
     key="k_abas",
     help="Se a planilha tiver abas que não são de produtos (ex: Rosa Maria: 'Markup', "
@@ -302,13 +341,6 @@ if not abas_escolhidas:
     st.stop()
 
 df_raw = todas_abas[abas_escolhidas[0]]
-
-with st.expander("👁️ Pré-visualização (primeiras 15 linhas da 1ª aba selecionada)", expanded=False):
-    st.dataframe(df_raw.head(15), use_container_width=True)
-
-# ─── Configuração ────────────────────────────────────────────────────────────
-st.divider()
-st.markdown('<div class="section-header">⚙️ Configuração</div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
 
@@ -347,11 +379,9 @@ colunas_forn = [c for c in df_forn.columns if c != "_aba_origem"]
 
 with col2:
     nome_fornecedor = st.text_input(
-        "Nome do fornecedor",
+        "Nome do fornecedor (para o relatório)",
         value=arquivo_fornecedor.name.split(".")[0],
     )
-
-col3, col4, col5, col6 = st.columns(4)
 
 # Colunas sugeridas pela receita (aplicadas após o cabeçalho ser lido)
 _rc = st.session_state.get("_receita_cols", {}) if st.session_state.get("_receita_aplicada") else {}
@@ -367,112 +397,8 @@ def _indice_col(nome_alvo, colunas, padrao=0):
             return i
     return padrao
 
-with col3:
-    col_codigo = st.selectbox(
-        "Coluna do CÓDIGO",
-        options=colunas_forn,
-        index=_indice_col(_rc.get("codigo"), colunas_forn, 0),
-    )
 
-with col4:
-    col_preco = st.selectbox(
-        "Coluna do PREÇO",
-        options=colunas_forn,
-        index=_indice_col(_rc.get("preco"), colunas_forn, min(1, len(colunas_forn) - 1)),
-    )
-
-with col5:
-    ipi = st.number_input("IPI (%)", min_value=0.0, max_value=100.0, value=0.0, step=0.25)
-
-# ─── Opções avançadas ─────────────────────────────────────────────────────────
-st.markdown('<div class="section-header">🔧 Opções de compatibilização</div>', unsafe_allow_html=True)
-
-# Inicializa as flags de opção no session_state (padrão desmarcado)
-for _k in ["k_normalizar", "k_concatenar", "k_usar_valor", "k_ipi_prod", "k_agregar"]:
-    if _k not in st.session_state:
-        st.session_state[_k] = False
-
-col_opt1, col_opt2, col_opt3 = st.columns(3)
-
-with col_opt1:
-    normalizar_codigos = st.checkbox(
-        "🔄 Normalizar códigos (remover acabamentos e hifens)",
-        key="k_normalizar",
-        help="Ex: Revoluz envia 'RI-H54414-1-BFM OU PTO' e no DOit é 'RI-H54414-1'. "
-             "Remove sufixos de acabamento e hifens para compatibilizar. "
-             "Usar com: Revoluz, Revolux e similares.",
-    )
-
-with col_opt2:
-    concatenar_colunas = st.checkbox(
-        "🔗 Concatenar colunas para formar código",
-        key="k_concatenar",
-        help="Ex: Spotline tem ID=84 e Descrição='385/2 PLAFON SMART...', no DOit é 'SL-84-385-2'. "
-             "Junta o ID + primeira palavra da descrição para formar o código completo. "
-             "Usar com: Spotline.",
-    )
-
-with col_opt3:
-    usar_col_valor = st.checkbox(
-        "💲 Valor em coluna separada",
-        key="k_usar_valor",
-        help="Ex: Golden Art tem 'R$' em uma coluna e o valor numérico em outra. "
-             "Selecione a coluna com o número após ativar. "
-             "Usar com: Golden Art.",
-    )
-
-col_opt4, col_opt5, _col_opt6 = st.columns(3)
-
-with col_opt4:
-    usar_ipi_por_produto = st.checkbox(
-        "📊 IPI por produto (coluna da planilha)",
-        key="k_ipi_prod",
-        help="Ex: Stella traz o IPI de cada item na coluna '% IPI'. "
-             "Ativa o uso do IPI de cada linha no lugar do IPI fixo acima. "
-             "Linhas sem IPI usam o IPI fixo como fallback. "
-             "Usar com: Stella.",
-    )
-
-with col_opt5:
-    agregar_acabamentos = st.checkbox(
-        "🧩 Código com acabamentos em linhas (usar maior preço)",
-        key="k_agregar",
-        help="Ex: Rosa Maria repete a referência numa linha e deixa a linha seguinte "
-             "em branco com o preço do outro acabamento. Preenche o código para baixo "
-             "e usa o MAIOR preço por referência. Usar com: Rosa Maria.",
-    )
-
-col_valor_separado = None
-if usar_col_valor:
-    col_valor_separado = st.selectbox(
-        "Coluna com o VALOR numérico",
-        options=colunas_forn,
-        index=_indice_col(_rc.get("preco"), colunas_forn, 0),
-    )
-
-col_ipi_produto = None
-if usar_ipi_por_produto:
-    col_ipi_produto = st.selectbox(
-        "Coluna com o % de IPI por produto",
-        options=colunas_forn,
-        index=_indice_col(_rc.get("ipi_col"), colunas_forn, 0),
-        help="Ex: Stella → coluna '% IPI'. Aceita valores como 9.75, '9,75%' ou 0,0975.",
-    )
-
-col_concat_segunda = None
-if concatenar_colunas:
-    col_concat_segunda = st.selectbox(
-        "Segunda coluna (será extraída a primeira palavra e concatenada ao código)",
-        options=colunas_forn,
-        index=_indice_col(_rc.get("segunda_col"), colunas_forn, 0),
-        help="A primeira palavra desta coluna será unida ao código com hífen. Ex: ID=84, Descrição='385/2 PLAFON...' → 84-385-2",
-    )
-
-# A receita já foi aplicada aos widgets deste rerun; consumir a flag para que o
-# usuário possa ajustar os campos manualmente sem que voltem ao valor da receita.
-st.session_state["_receita_aplicada"] = False
-
-# ─── Seleção do fabricante ────────────────────────────────────────────────────
+# Lista de fabricantes do DOit (para o seletor abaixo)
 fabricantes_doit = (
     df_doit[["Id do Fabricante", "Fabricante"]]
     .dropna(subset=["Id do Fabricante"])
@@ -486,8 +412,6 @@ fabricantes_doit["_label"] = (
     + fabricantes_doit["Id do Fabricante"].astype(int).astype(str)
     + ")"
 )
-
-# Pré-selecionar o fabricante sugerido pela receita (casando pelo ID do DOit)
 _labels_fab = fabricantes_doit["_label"].tolist()
 _idx_fab = 0
 _fab_id_receita = st.session_state.get("_receita_fab_id")
@@ -498,18 +422,122 @@ if _fab_id_receita is not None:
     if _match:
         _idx_fab = int(_match[0])
 
+# Campos essenciais numa linha só: Código · Preço · IPI · Fabricante
+col3, col4, col5 = st.columns([1, 1, 0.7])
+with col3:
+    col_codigo = st.selectbox(
+        "Coluna do CÓDIGO",
+        options=colunas_forn,
+        index=_indice_col(_rc.get("codigo"), colunas_forn, 0),
+    )
+with col4:
+    col_preco = st.selectbox(
+        "Coluna do PREÇO",
+        options=colunas_forn,
+        index=_indice_col(_rc.get("preco"), colunas_forn, min(1, len(colunas_forn) - 1)),
+    )
+with col5:
+    ipi = st.number_input("IPI (%)", min_value=0.0, max_value=100.0, value=0.0, step=0.25)
+
 fabricante_escolhido = st.selectbox(
-    "🏭 Fabricante no DOit",
+    "Fabricante no DOit",
     options=_labels_fab,
     index=_idx_fab,
-    help="Selecione o fabricante cadastrado no DOit correspondente a esta planilha. "
-         "Ao aplicar a configuração de um fornecedor, ele já vem pré-selecionado.",
+    help="Fabricante cadastrado no DOit correspondente a esta planilha. "
+         "Ao escolher um fornecedor conhecido, já vem pré-selecionado.",
 )
-
 idx_selecionado = fabricantes_doit["_label"].tolist().index(fabricante_escolhido)
 id_fabricante = fabricantes_doit.iloc[idx_selecionado]["Id do Fabricante"]
 
-with st.expander("📋 Planilha do fornecedor (com cabeçalho aplicado)", expanded=False):
+# ─── Opções avançadas (recolhidas) ────────────────────────────────────────────
+# A receita já marca as opções certas; o expander fica fechado por padrão e só
+# quem configura manualmente precisa abrir.
+for _k in ["k_normalizar", "k_concatenar", "k_usar_valor", "k_ipi_prod", "k_agregar", "k_multichave"]:
+    if _k not in st.session_state:
+        st.session_state[_k] = False
+# Match de códigos soltos vem ligado por padrão
+if "k_soltos" not in st.session_state:
+    st.session_state["k_soltos"] = True
+
+col_valor_separado = None
+col_ipi_produto = None
+col_concat_segunda = None
+
+with st.expander("⚙️ Opções avançadas (normalmente já configuradas pelo fornecedor)", expanded=False):
+    normalizar_codigos = st.checkbox(
+        "Normalizar códigos (remover acabamentos e hifens)",
+        key="k_normalizar",
+        help="Ex: Revoluz envia 'RI-H54414-1-BFM OU PTO' e no DOit é 'RI-H54414-1'. "
+             "Usar com: Revoluz, Revolux e similares.",
+    )
+    concatenar_colunas = st.checkbox(
+        "Concatenar colunas para formar código",
+        key="k_concatenar",
+        help="Junta o código + a 1ª palavra de outra coluna (ex: ID + modelo → 84-385-2). "
+             "Use quando o DOit guarda o código já concatenado.",
+    )
+    chaves_multiplas = st.checkbox(
+        "Casar por 2 chaves (código OU modelo)",
+        key="k_multichave",
+        help="Ex: Spotline — o produto às vezes está no DOit pelo ID (9766) e às vezes "
+             "pelo modelo (1362/1, início da descrição). Tenta casar por qualquer um dos "
+             "dois. Usar com: Spotline.",
+    )
+    usar_col_valor = st.checkbox(
+        "Valor em coluna separada",
+        key="k_usar_valor",
+        help="Ex: Golden Art tem 'R$' numa coluna e o número em outra. Usar com: Golden Art.",
+    )
+    usar_ipi_por_produto = st.checkbox(
+        "IPI por produto (coluna da planilha)",
+        key="k_ipi_prod",
+        help="Ex: Stella traz o IPI de cada item na coluna '% IPI'. Usar com: Stella.",
+    )
+    agregar_acabamentos = st.checkbox(
+        "Código com acabamentos em linhas (usar maior preço)",
+        key="k_agregar",
+        help="Ex: Rosa Maria repete a referência e deixa a linha seguinte em branco com "
+             "o preço do outro acabamento. Usar com: Rosa Maria.",
+    )
+    casar_codigos_soltos = st.checkbox(
+        "Casar códigos soltos / sem padrão (recomendado)",
+        key="k_soltos",
+        help="Alguns produtos foram cadastrados no DOit sem o padrão do fornecedor "
+             "(ex: '0001' em vez de 'SL-0001-BR'). Esta opção casa esses casos quando "
+             "há um único produto compatível. Quando houver mais de um candidato, o "
+             "item vai para a aba 'Conferir manualmente' (não é atualizado sozinho).",
+    )
+
+    col_valor_separado = None
+    if usar_col_valor:
+        col_valor_separado = st.selectbox(
+            "Coluna com o VALOR numérico",
+            options=colunas_forn,
+            index=_indice_col(_rc.get("preco"), colunas_forn, 0),
+        )
+
+    col_ipi_produto = None
+    if usar_ipi_por_produto:
+        col_ipi_produto = st.selectbox(
+            "Coluna com o % de IPI por produto",
+            options=colunas_forn,
+            index=_indice_col(_rc.get("ipi_col"), colunas_forn, 0),
+            help="Ex: Stella → coluna '% IPI'. Aceita 9.75, '9,75%' ou 0,0975.",
+        )
+
+    col_concat_segunda = None
+    if concatenar_colunas or chaves_multiplas:
+        col_concat_segunda = st.selectbox(
+            "Coluna do modelo / 2ª parte (usa a 1ª palavra)",
+            options=colunas_forn,
+            index=_indice_col(_rc.get("segunda_col"), colunas_forn, 0),
+            help="Ex: Descrição='1362/1 PENDENTE...' → usa '1362/1'.",
+        )
+
+# A receita já foi aplicada aos widgets deste rerun; consumir a flag.
+st.session_state["_receita_aplicada"] = False
+
+with st.expander("👁️ Pré-visualizar a planilha (com cabeçalho aplicado)", expanded=False):
     st.dataframe(df_forn[colunas_forn].head(10), use_container_width=True)
 
 
@@ -564,9 +592,7 @@ def parse_ipi(valor):
 
 
 # ─── Processamento ────────────────────────────────────────────────────────────
-st.divider()
-st.markdown('<div class="section-header">🔄 Processamento</div>', unsafe_allow_html=True)
-
+st.write("")
 if st.button("▶️ Processar atualização", type="primary", use_container_width=True):
     # Limpar código do fornecedor
     df_forn["_codigo_limpo"] = df_forn[col_codigo].astype(str).str.strip()
@@ -587,12 +613,12 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
     if usar_ipi_por_produto and col_ipi_produto:
         df_forn["_ipi_produto"] = df_forn[col_ipi_produto].apply(parse_ipi)
 
-    # Concatenar colunas se ativado (ex: Spotline: ID + primeira palavra da descrição)
-    if concatenar_colunas and col_concat_segunda:
-        def _extrair_primeira_palavra(val):
-            s = str(val).strip()
-            return s.split()[0] if s and s != "nan" else ""
+    def _extrair_primeira_palavra(val):
+        s = str(val).strip()
+        return s.split()[0] if s and s != "nan" else ""
 
+    # Concatenar colunas se ativado (ex: base antiga: ID + primeira palavra da descrição)
+    if concatenar_colunas and col_concat_segunda:
         df_forn["_segunda_parte"] = df_forn[col_concat_segunda].apply(_extrair_primeira_palavra)
         # Concatenar: código + "-" + primeira palavra (com / trocado por -)
         df_forn["_codigo_limpo"] = (
@@ -600,6 +626,13 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
         )
         # Limpar casos onde uma das partes é vazia
         df_forn["_codigo_limpo"] = df_forn["_codigo_limpo"].str.strip("-")
+
+    # Chave alternativa (ex: Spotline hoje): além do código principal (ID), guardar
+    # o "modelo" = primeira palavra da 2ª coluna. O cruzamento tenta casar por
+    # qualquer uma das duas chaves. Resolve bases onde o mesmo produto às vezes
+    # está cadastrado pelo ID e às vezes pelo modelo.
+    if chaves_multiplas and col_concat_segunda:
+        df_forn["_codigo_alt"] = df_forn[col_concat_segunda].apply(_extrair_primeira_palavra)
 
     df_forn["_preco_limpo"] = df_forn[col_preco].apply(parse_preco)
 
@@ -689,7 +722,91 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
         mask_nao_encontrado = ~df_forn_valido["_codigo_limpo"].isin(refs_doit)
         df_precisam_criar = df_forn_valido[mask_nao_encontrado].copy()
 
+    # ─── Match por núcleo (códigos soltos / sem padrão) ───────────────────────
+    # Alguns produtos do DOit foram cadastrados sem o padrão do fornecedor
+    # (ex: "0001" em vez de "SL-0001-BR"). Aqui tentamos casar o que sobrou em
+    # "precisam ser criados" reduzindo os códigos ao "núcleo" (sem prefixo de
+    # fabricante, sem hífens/barras/espaços). Só casa quando há UM único produto
+    # compatível no fabricante selecionado; se houver 2+, vai para conferência.
+    df_conferir = pd.DataFrame()
+    if casar_codigos_soltos and not df_precisam_criar.empty:
+        import re as _re
+
+        def _nucleo(codigo):
+            s = str(codigo).strip().upper()
+            s = _re.sub(r"^[A-Z]{1,4}-", "", s)   # remove prefixo tipo SL-
+            s = _re.sub(r"[-/\s]", "", s)          # remove separadores
+            return s
+
+        # Referências do DOit apenas do fabricante selecionado, com núcleo
+        doit_fab = df_doit[df_doit["Id do Fabricante"] == id_fabricante].copy()
+        doit_fab["_nucleo"] = doit_fab["_ref_base"].apply(_nucleo)
+
+        # Núcleos que já foram usados no match principal (evita recasar)
+        if not df_merge.empty:
+            refs_ja = set(df_merge["_ref_base"].astype(str)) if "_ref_base" in df_merge.columns else set()
+        else:
+            refs_ja = set()
+
+        # Agrupar candidatos por núcleo (excluindo os já casados)
+        cand = doit_fab[~doit_fab["_ref_base"].astype(str).isin(refs_ja)]
+        candidatos_por_nucleo = cand.groupby("_nucleo")
+
+        linhas_novo_match = []   # viram atualizações (match único)
+        linhas_conferir = []     # ambíguos (2+ candidatos)
+        idx_resolvidos = []      # índices de df_precisam_criar que saíram
+
+        tem_alt = "_codigo_alt" in df_precisam_criar.columns
+        for idx, row in df_precisam_criar.iterrows():
+            # Tenta casar pelo núcleo do código principal; se não achar e houver
+            # chave alternativa (ex: modelo da Spotline), tenta por ela.
+            grupo = None
+            for chave in ([row["_codigo_limpo"]] + ([row.get("_codigo_alt")] if tem_alt else [])):
+                nuc = _nucleo(chave) if chave is not None else ""
+                if nuc and nuc in candidatos_por_nucleo.groups:
+                    grupo = candidatos_por_nucleo.get_group(nuc)
+                    break
+            if grupo is None:
+                continue
+            refs_distintas = grupo["_ref_base"].nunique()
+            if refs_distintas == 1:
+                # Match único e seguro: gerar uma linha de merge para cada SKU dessa referência
+                for _, prod in grupo.iterrows():
+                    linha = prod.to_dict()
+                    linha["_codigo_limpo"] = row["_codigo_limpo"]
+                    linha["_preco_limpo"] = row["_preco_limpo"]
+                    if "_ipi_produto" in df_precisam_criar.columns:
+                        linha["_ipi_produto"] = row.get("_ipi_produto")
+                    linha["_match_tipo"] = "núcleo"
+                    linhas_novo_match.append(linha)
+                idx_resolvidos.append(idx)
+            else:
+                # Ambíguo: registrar candidatos para conferência (NÃO atualiza)
+                for _, prod in grupo.iterrows():
+                    linhas_conferir.append({
+                        "Código fornecedor": row["_codigo_limpo"],
+                        "Preço fornecedor": row["_preco_limpo"],
+                        "SKU (DOit)": prod.get("SKU"),
+                        "# Referência (DOit)": prod.get("# Referência"),
+                        "Nome (DOit)": prod.get("Nome"),
+                        "Preço atual (DOit)": prod.get("Preço"),
+                    })
+                idx_resolvidos.append(idx)
+
+        # Incorporar os matches por núcleo ao df_merge
+        if linhas_novo_match:
+            df_extra = pd.DataFrame(linhas_novo_match)
+            df_merge = pd.concat([df_merge, df_extra], ignore_index=True)
+
+        # Remover de "precisam ser criados" o que foi resolvido (casou ou foi p/ conferir)
+        if idx_resolvidos:
+            df_precisam_criar = df_precisam_criar.drop(index=idx_resolvidos)
+
+        if linhas_conferir:
+            df_conferir = pd.DataFrame(linhas_conferir)
+
     # Guardar no session_state
+    st.session_state["df_conferir"] = df_conferir
     st.session_state["df_merge_raw"] = df_merge
     st.session_state["df_forn_valido"] = df_forn_valido
     st.session_state["df_precisam_criar"] = df_precisam_criar
@@ -703,6 +820,7 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
 if st.session_state.get("processado", False):
     df_merge = st.session_state["df_merge_raw"]
     df_precisam_criar = st.session_state["df_precisam_criar"]
+    df_conferir = st.session_state.get("df_conferir", pd.DataFrame())
 
     # Filtrar o merge para manter apenas produtos do fabricante selecionado
     if not df_merge.empty:
@@ -739,12 +857,21 @@ if st.session_state.get("processado", False):
     st.divider()
     st.markdown('<div class="section-header">📊 Resultado</div>', unsafe_allow_html=True)
 
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    n_conferir = 0 if df_conferir is None or df_conferir.empty else df_conferir["Código fornecedor"].nunique()
+    col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
     col_m1.metric("✅ Atualizados", f"{len(df_merge):,}")
     col_m2.metric("🆕 Precisam ser criados", f"{len(df_precisam_criar):,}")
     col_m3.metric("⚠️ Não atualizados", f"{len(df_nao_atualizados):,}")
+    col_m4.metric("🔎 Conferir manual", f"{n_conferir:,}")
     ipi_label = "Por produto" if usar_ipi_col else f"{ipi_fixo}%"
-    col_m4.metric("📦 IPI", ipi_label)
+    col_m5.metric("📦 IPI", ipi_label)
+
+    if n_conferir:
+        st.warning(
+            f"{n_conferir} código(s) do fornecedor bateram com mais de um produto no DOit "
+            "e **não** foram atualizados automaticamente. Confira na aba "
+            "'🔎 Conferir manualmente' e ajuste esses no DOit."
+        )
 
     # ─── Modelo Custo ─────────────────────────────────────────────────────────
     # Data como datetime nativo (não string) para o Excel reconhecer como data.
@@ -782,7 +909,7 @@ if st.session_state.get("processado", False):
     # ─── Relatório ────────────────────────────────────────────────────────────
     if not df_merge.empty:
         df_produtos_doit = df_merge.drop(
-            columns=["_codigo_limpo", "_preco_limpo", "_custo_liquido", "_custo_bruto", "_codigo_norm", "_ref_norm", "_ref_base", "_segunda_parte", "_ipi_produto", "_ipi_aplicado"],
+            columns=["_codigo_limpo", "_preco_limpo", "_custo_liquido", "_custo_bruto", "_codigo_norm", "_ref_norm", "_ref_base", "_segunda_parte", "_codigo_alt", "_match_tipo", "_ipi_produto", "_ipi_aplicado"],
             errors="ignore",
         )
     else:
@@ -790,21 +917,28 @@ if st.session_state.get("processado", False):
 
     df_forn_valido = st.session_state["df_forn_valido"]
     df_produtos_forn = df_forn_valido.drop(
-        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
+        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte", "_codigo_alt", "_match_tipo", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
     )
 
     df_criar_saida = df_precisam_criar.drop(
-        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
+        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte", "_codigo_alt", "_match_tipo", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
     )
 
     # ─── Tabs de visualização ─────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📋 Modelo Custo", "✅ Atualizados", "🆕 Precisam ser criados", "⚠️ Não atualizados"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📋 Modelo Custo", "✅ Atualizados", "🆕 Precisam ser criados",
+         "⚠️ Não atualizados", "🔎 Conferir manualmente"]
     )
 
     with tab1:
         if not df_modelo_custo.empty:
-            st.dataframe(df_modelo_custo, use_container_width=True, height=400)
+            # Versão só para exibição: data como dd/mm/aaaa (sem horário)
+            df_modelo_view = df_modelo_custo.copy()
+            if "MODIFICADO EM" in df_modelo_view.columns:
+                df_modelo_view["MODIFICADO EM"] = pd.to_datetime(
+                    df_modelo_view["MODIFICADO EM"]
+                ).dt.strftime("%d/%m/%Y")
+            st.dataframe(df_modelo_view, use_container_width=True, height=400)
         else:
             st.info("Nenhum produto para atualizar.")
 
@@ -833,6 +967,17 @@ if st.session_state.get("processado", False):
             )
         else:
             st.info("Todos os produtos do fabricante foram atualizados.")
+
+    with tab5:
+        if df_conferir is not None and not df_conferir.empty:
+            st.caption(
+                "Estes códigos do fornecedor bateram com mais de um produto no DOit. "
+                "Como o preço pode variar por acabamento, o app não escolhe sozinho — "
+                "confira e atualize manualmente no DOit o SKU correto."
+            )
+            st.dataframe(df_conferir, use_container_width=True, height=400)
+        else:
+            st.info("Nenhum caso ambíguo para conferir. 👍")
 
     # ─── Texto para o cliente ─────────────────────────────────────────────────
     st.divider()
@@ -865,7 +1010,7 @@ if st.session_state.get("processado", False):
         ws = writer.sheets[sheet_name]
         fmt_texto = wb.add_format({"num_format": "@"})           # texto
         fmt_num = wb.add_format({"num_format": "0.00"})           # número 2 casas
-        fmt_data = wb.add_format({"num_format": "yyyy-mm-dd"})    # data ISO
+        fmt_data = wb.add_format({"num_format": "dd/mm/yyyy"})    # data dd/mm/aaaa
         cols = list(df_modelo.columns)
 
         def _ci(nome):
@@ -885,7 +1030,7 @@ if st.session_state.get("processado", False):
 
     with col_dl1:
         buffer1 = BytesIO()
-        with pd.ExcelWriter(buffer1, engine="xlsxwriter") as writer:
+        with pd.ExcelWriter(buffer1, engine="xlsxwriter", datetime_format="dd/mm/yyyy") as writer:
             escrever_modelo_custo(writer, df_modelo_custo)
         buffer1.seek(0)
 
@@ -899,7 +1044,7 @@ if st.session_state.get("processado", False):
 
     with col_dl2:
         buffer2 = BytesIO()
-        with pd.ExcelWriter(buffer2, engine="xlsxwriter") as writer:
+        with pd.ExcelWriter(buffer2, engine="xlsxwriter", datetime_format="dd/mm/yyyy") as writer:
             if not df_produtos_doit.empty:
                 df_produtos_doit.to_excel(writer, index=False, sheet_name="Produtos DOit")
             df_produtos_forn.to_excel(writer, index=False, sheet_name="Produtos")
@@ -910,6 +1055,8 @@ if st.session_state.get("processado", False):
                 df_nao_atualizados.to_excel(
                     writer, index=False, sheet_name="Não foram atualizados"
                 )
+            if df_conferir is not None and not df_conferir.empty:
+                df_conferir.to_excel(writer, index=False, sheet_name="Conferir manualmente")
         buffer2.seek(0)
 
         st.download_button(
