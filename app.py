@@ -189,6 +189,49 @@ RECEITAS = {
             "Preencha o IPI (%) à mão, se houver.",
         ],
     },
+    "Accord": {
+        # 6 abas de produto; as demais (Opções/Informações/Política) são
+        # informativas e podem ficar selecionadas — suas linhas não têm preço
+        # válido e são descartadas no processamento.
+        "aba": None,
+        "header": 1,
+        # Na aba Pendente (1ª) o cabeçalho "Referência"/"Descrição" não está na
+        # linha 1, então as colunas saem como "Unnamed: 2" (código) e
+        # "Geral 2025" (preço Lâmina Natural). As posições são as mesmas em todas
+        # as abas de produto: código = col 2, Natural = col 4, Tingida = col 5.
+        # Apenas as abas de produto são processadas; as informativas (Opções de
+        # Acabamento, Informações LED, Política de Compra e Venda) são deixadas
+        # fora da seleção — não têm preço e quebravam o preview.
+        "abas": ["Pendente", "Plafon", "Arandela", "Abajur", "Coluna", "Mobiliário"],
+        "codigo": "Unnamed: 2",
+        "preco": "Geral 2025",       # col 4 → Lâmina Natural
+        "preco_tingida": "Unnamed: 5",  # col 5 → Lâmina Tingida
+        # Dois acabamentos: cada referência tem 2 preços (Natural e Tingida) e no
+        # DOit vira vários SKUs. Os SKUs com "NATURAL" no nome recebem o preço
+        # Natural; os de cor/tingido recebem o preço Tingida.
+        "dois_acabamentos": True,
+        # A Accord NÃO tem IPI. Os 10% são MARGEM aplicada sobre o preço:
+        # CUSTO LÍQUIDO = preço do acabamento · CUSTO = líquido × 1,10.
+        "margem_fixa": 10.0,
+        "fab_id": 7623,
+        "passos": [
+            "A receita já seleciona só as abas de produto (Pendente, Plafon, "
+            "Arandela, Abajur, Coluna e Mobiliário). As abas informativas "
+            "(acabamento, LED, política) são ignoradas automaticamente.",
+            "Cabeçalho na linha 1.",
+            "Código = coluna **Referência** (col. C). A planilha tem 2 preços: "
+            "**Lâmina Natural** (col. E) e **Lâmina Tingida** (col. F).",
+            "O app diferencia o acabamento: SKUs com **NATURAL** no nome recebem "
+            "o preço da Lâmina Natural; os de **cor/tingido** recebem o da Tingida.",
+            "**Sem IPI.** Os 10% são **margem**: CUSTO = preço × 1,10 e "
+            "CUSTO LÍQUIDO = preço (antes da margem).",
+            "Se a Lâmina Tingida vier **vazia**, os SKUs de cor daquela "
+            "referência ficam **sem atualizar**.",
+            "Aba **Coluna**: ignore os valores de IPI (7,5% / 10%) que aparecem "
+            "no topo — a Accord não usa IPI.",
+        ],
+        "observacao": "Layout irregular por aba: confira o preview antes de processar.",
+    },
     "Golden Art": {
         "aba": None,  # tem 8 abas (Table 1..8) — deixe todas selecionadas
         "header": 0,
@@ -224,7 +267,14 @@ st.caption(
 
 def aplicar_receita(rec, abas_disponiveis):
     """Grava no session_state os valores dos widgets conforme a receita."""
-    if rec.get("aba") and rec["aba"] in abas_disponiveis:
+    if rec.get("abas"):
+        # Lista de abas de produto (ex: Accord): seleciona só as que existem no
+        # arquivo, ignorando abas informativas (acabamento, política, etc.).
+        # Match tolerante a espaços no nome (ex: "Plafon " na planilha).
+        _alvos = {str(a).strip().lower() for a in rec["abas"]}
+        selecao = [a for a in abas_disponiveis if str(a).strip().lower() in _alvos]
+        st.session_state["k_abas"] = selecao or list(abas_disponiveis)
+    elif rec.get("aba") and rec["aba"] in abas_disponiveis:
         st.session_state["k_abas"] = [rec["aba"]]
     else:
         st.session_state["k_abas"] = list(abas_disponiveis)
@@ -236,12 +286,21 @@ def aplicar_receita(rec, abas_disponiveis):
     st.session_state["k_ipi_prod"] = bool(rec.get("ipi_por_produto", False))
     st.session_state["k_agregar"] = bool(rec.get("agregar_acabamentos", False))
     st.session_state["k_multichave"] = bool(rec.get("chaves_multiplas", False))
+    st.session_state["k_preco_liquido"] = bool(rec.get("preco_e_liquido", False))
+    st.session_state["k_dois_acab"] = bool(rec.get("dois_acabamentos", False))
+    if "ipi_fixo" in rec:
+        st.session_state["k_ipi"] = float(rec["ipi_fixo"])
+    else:
+        # Receitas sem IPI (ex: Accord) zeram o campo para não aplicar nada
+        st.session_state["k_ipi"] = 0.0
     st.session_state["_receita_cols"] = {
         "codigo": rec.get("codigo"),
         "preco": rec.get("preco"),
+        "preco_tingida": rec.get("preco_tingida"),
         "segunda_col": rec.get("segunda_col"),
         "ipi_col": rec.get("ipi_col"),
     }
+    st.session_state["_receita_margem"] = rec.get("margem_fixa")
     st.session_state["_receita_fab_id"] = rec.get("fab_id")
     st.session_state["_receita_aplicada"] = True
 
@@ -274,9 +333,51 @@ with col_up:
 
 receita = RECEITAS[fornecedor_receita]
 
+
+def _limpar_estado_planilha():
+    """Remove do session_state tudo que depende da planilha enviada.
+
+    Chamado quando o usuário tira a planilha do uploader, para que a próxima
+    comece do zero (sem abas, colunas, opções ou resultado da anterior)."""
+    chaves = [
+        # Widgets de configuração (abas, cabeçalho, colunas e opções)
+        "k_abas", "k_header", "k_ipi",
+        "k_normalizar", "k_concatenar", "k_usar_valor", "k_ipi_prod",
+        "k_agregar", "k_multichave", "k_preco_liquido", "k_dois_acab", "k_soltos",
+        # Estado da receita aplicada
+        "_receita_cols", "_receita_margem", "_receita_fab_id",
+        "_receita_aplicada", "_receita_aplicada_para",
+        # Resultado do processamento
+        "df_conferir", "df_merge_raw", "df_forn_valido", "df_precisam_criar",
+        "ipi_fixo", "usar_ipi_por_produto", "preco_e_liquido", "dois_acabamentos",
+        "margem_fixa", "processado",
+    ]
+    for k in chaves:
+        st.session_state.pop(k, None)
+
+
 if arquivo_fornecedor is None:
+    # Se havia uma planilha carregada antes, limpar todo o estado para a próxima
+    # começar zerada (sem herdar abas/colunas/opções/resultado da anterior).
+    if st.session_state.get("_tinha_arquivo"):
+        _limpar_estado_planilha()
+        st.session_state["_tinha_arquivo"] = False
+        st.session_state["_nome_arquivo_atual"] = None
+        st.rerun()
     st.info("Escolha o fornecedor e envie a planilha para começar.")
     st.stop()
+
+# Marcar que há planilha carregada (habilita a limpeza quando ela for removida)
+st.session_state["_tinha_arquivo"] = True
+
+# Troca direta de planilha (sem passar pelo estado vazio): se o nome do arquivo
+# mudou, limpar o estado da anterior para a nova começar zerada.
+if st.session_state.get("_nome_arquivo_atual") != arquivo_fornecedor.name:
+    if st.session_state.get("_nome_arquivo_atual") is not None:
+        _limpar_estado_planilha()
+        st.session_state["_tinha_arquivo"] = True
+    st.session_state["_nome_arquivo_atual"] = arquivo_fornecedor.name
+    st.rerun()
 
 # ─── Leitura de abas ─────────────────────────────────────────────────────────
 todas_abas = pd.read_excel(arquivo_fornecedor, header=None, sheet_name=None)
@@ -437,7 +538,9 @@ with col4:
         index=_indice_col(_rc.get("preco"), colunas_forn, min(1, len(colunas_forn) - 1)),
     )
 with col5:
-    ipi = st.number_input("IPI (%)", min_value=0.0, max_value=100.0, value=0.0, step=0.25)
+    if "k_ipi" not in st.session_state:
+        st.session_state["k_ipi"] = 0.0
+    ipi = st.number_input("IPI (%)", min_value=0.0, max_value=100.0, step=0.25, key="k_ipi")
 
 fabricante_escolhido = st.selectbox(
     "Fabricante no DOit",
@@ -452,7 +555,7 @@ id_fabricante = fabricantes_doit.iloc[idx_selecionado]["Id do Fabricante"]
 # ─── Opções avançadas (recolhidas) ────────────────────────────────────────────
 # A receita já marca as opções certas; o expander fica fechado por padrão e só
 # quem configura manualmente precisa abrir.
-for _k in ["k_normalizar", "k_concatenar", "k_usar_valor", "k_ipi_prod", "k_agregar", "k_multichave"]:
+for _k in ["k_normalizar", "k_concatenar", "k_usar_valor", "k_ipi_prod", "k_agregar", "k_multichave", "k_preco_liquido", "k_dois_acab"]:
     if _k not in st.session_state:
         st.session_state[_k] = False
 # Match de códigos soltos vem ligado por padrão
@@ -462,6 +565,7 @@ if "k_soltos" not in st.session_state:
 col_valor_separado = None
 col_ipi_produto = None
 col_concat_segunda = None
+col_preco_tingida = None
 
 with st.expander("⚙️ Opções avançadas (normalmente já configuradas pelo fornecedor)", expanded=False):
     normalizar_codigos = st.checkbox(
@@ -499,6 +603,20 @@ with st.expander("⚙️ Opções avançadas (normalmente já configuradas pelo 
         help="Ex: Rosa Maria repete a referência e deixa a linha seguinte em branco com "
              "o preço do outro acabamento. Usar com: Rosa Maria.",
     )
+    preco_e_liquido = st.checkbox(
+        "Preço já é o custo líquido (não aplicar o ×1,10 do passo 1)",
+        key="k_preco_liquido",
+        help="Quando o fornecedor já manda o custo líquido na planilha. Com esta "
+             "opção o CUSTO LÍQUIDO = preço (sem o ×1,10) e o CUSTO = preço × (1 + IPI).",
+    )
+    dois_acabamentos = st.checkbox(
+        "Dois acabamentos: Natural × Tingida (margem 10%, sem IPI)",
+        key="k_dois_acab",
+        help="Ex: Accord — cada referência tem 2 preços (Lâmina Natural e Lâmina "
+             "Tingida). Os SKUs com 'NATURAL' no nome recebem o preço Natural; os de "
+             "cor/tingido recebem o da Tingida. CUSTO = preço × 1,10 (margem, sem IPI). "
+             "Se a Tingida estiver vazia, os SKUs de cor ficam sem atualizar.",
+    )
     casar_codigos_soltos = st.checkbox(
         "Casar códigos soltos / sem padrão (recomendado)",
         key="k_soltos",
@@ -534,17 +652,37 @@ with st.expander("⚙️ Opções avançadas (normalmente já configuradas pelo 
             help="Ex: Descrição='1362/1 PENDENTE...' → usa '1362/1'.",
         )
 
+    col_preco_tingida = None
+    if dois_acabamentos:
+        col_preco_tingida = st.selectbox(
+            "Coluna do preço da Lâmina TINGIDA",
+            options=colunas_forn,
+            index=_indice_col(_rc.get("preco_tingida"), colunas_forn, min(2, len(colunas_forn) - 1)),
+            help="Ex: Accord → coluna 'Lâmina Tingida' (col. F). A coluna do PREÇO "
+                 "acima deve apontar para a Lâmina Natural (col. E).",
+        )
+
 # A receita já foi aplicada aos widgets deste rerun; consumir a flag.
 st.session_state["_receita_aplicada"] = False
 
 with st.expander("👁️ Pré-visualizar a planilha (com cabeçalho aplicado)", expanded=False):
-    st.dataframe(df_forn[colunas_forn].head(10), use_container_width=True)
+    # Converter para texto só na exibição: evita o erro de serialização do
+    # Arrow quando uma coluna mistura tipos (ex: abas informativas trazem
+    # texto e números na mesma coluna). Não afeta o processamento.
+    _preview = df_forn[colunas_forn].head(10).astype(str).replace({"nan": "", "None": ""})
+    st.dataframe(_preview, use_container_width=True)
 
 
 # ─── Funções auxiliares ───────────────────────────────────────────────────────
 def parse_preco(valor):
     if pd.isna(valor):
         return None
+    # Quando a célula já é um número (int/float), o ponto é sempre decimal — não
+    # aplicamos a heurística de milhar (que destruiria valores como 1394.275,
+    # comuns na Accord por serem resultado de cálculo de markup).
+    if isinstance(valor, (int, float)):
+        v = float(valor)
+        return v if v >= 0 else None
     s = str(valor).strip()
     s = s.replace("R$", "").replace("r$", "").strip()
     s = s.replace(" ", "")
@@ -636,7 +774,13 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
 
     df_forn["_preco_limpo"] = df_forn[col_preco].apply(parse_preco)
 
-    # Remover linhas sem código ou preço válido
+    # Dois acabamentos (ex: Accord): guardar também o preço da Lâmina Tingida.
+    # "_preco_limpo" = Natural (coluna do PREÇO) e "_preco_tingida" = Tingida.
+    if dois_acabamentos and col_preco_tingida:
+        df_forn["_preco_tingida"] = df_forn[col_preco_tingida].apply(parse_preco)
+
+    # Remover linhas sem código ou preço válido. No modo dois acabamentos basta
+    # ter o Natural; linhas sem Natural não têm referência de produto utilizável.
     df_forn_valido = df_forn.dropna(subset=["_preco_limpo"]).copy()
     df_forn_valido = df_forn_valido[
         (df_forn_valido["_codigo_limpo"] != "nan")
@@ -647,6 +791,8 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
     colunas_extra_merge = []
     if usar_ipi_por_produto and col_ipi_produto and "_ipi_produto" in df_forn_valido.columns:
         colunas_extra_merge.append("_ipi_produto")
+    if dois_acabamentos and "_preco_tingida" in df_forn_valido.columns:
+        colunas_extra_merge.append("_preco_tingida")
 
     # Rosa Maria: com o código preenchido para baixo, a mesma referência tem 2 preços
     # (um por acabamento). Ordenar por preço decrescente faz o dedupe (keep="first")
@@ -654,8 +800,47 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
     if agregar_acabamentos:
         df_forn_valido = df_forn_valido.sort_values("_preco_limpo", ascending=False)
 
+    # ─── Dois acabamentos: Natural × Tingida (ex: Accord) ─────────────────────
+    # Cada referência tem 2 preços (Natural e Tingida). No DOit a referência vira
+    # vários SKUs; decidimos por SKU: nome com "NATURAL" → preço Natural, senão
+    # (cor/tingido) → preço Tingida. Se o preço do acabamento for nulo (ex:
+    # Tingida vazia), o SKU não é atualizado (fica em "não atualizados").
+    if dois_acabamentos:
+        _cols_forn = ["_codigo_limpo", "_preco_limpo"]
+        if "_preco_tingida" in df_forn_valido.columns:
+            _cols_forn.append("_preco_tingida")
+        # 1 linha por referência do fornecedor
+        df_forn_unico = df_forn_valido.drop_duplicates(subset=["_codigo_limpo"], keep="first")
+
+        # Cruzar com o DOit pela referência base (código puro, sem sufixo " | 394")
+        df_merge = df_doit.merge(
+            df_forn_unico[_cols_forn],
+            left_on="_ref_base",
+            right_on="_codigo_limpo",
+            how="inner",
+        )
+
+        # Escolher o preço por SKU conforme o acabamento no nome do produto
+        _nome_upper = df_merge["Nome"].astype(str).str.upper()
+        _eh_natural = _nome_upper.str.contains("NATURAL", na=False)
+        _preco_tin = (
+            df_merge["_preco_tingida"] if "_preco_tingida" in df_merge.columns
+            else pd.Series([None] * len(df_merge), index=df_merge.index)
+        )
+        # Natural → preço Natural; cor/tingido → preço Tingida
+        df_merge["_preco_limpo"] = _preco_tin.where(~_eh_natural, df_merge["_preco_limpo"])
+
+        # Remover SKUs sem preço para o seu acabamento (ex: cor sem Tingida):
+        # ficam fora do merge e aparecem em "não atualizados".
+        df_merge = df_merge[df_merge["_preco_limpo"].notna()].copy()
+
+        # Produtos do fornecedor que NÃO existem no DOit (precisam ser criados)
+        refs_doit = set(df_doit["_ref_base"].astype(str).str.strip())
+        mask_nao_encontrado = ~df_forn_valido["_codigo_limpo"].isin(refs_doit)
+        df_precisam_criar = df_forn_valido[mask_nao_encontrado].copy()
+
     # Normalização de códigos (se ativada)
-    if normalizar_codigos:
+    elif normalizar_codigos:
         import re
 
         # Acabamentos conhecidos (Revoluz e similares)
@@ -729,7 +914,9 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
     # fabricante, sem hífens/barras/espaços). Só casa quando há UM único produto
     # compatível no fabricante selecionado; se houver 2+, vai para conferência.
     df_conferir = pd.DataFrame()
-    if casar_codigos_soltos and not df_precisam_criar.empty:
+    # No modo dois acabamentos (Accord) o match por núcleo é pulado: ele aplicaria
+    # só o preço Natural, sem a lógica de acabamento por SKU.
+    if casar_codigos_soltos and not dois_acabamentos and not df_precisam_criar.empty:
         import re as _re
 
         def _nucleo(codigo):
@@ -814,6 +1001,9 @@ if st.button("▶️ Processar atualização", type="primary", use_container_wid
     st.session_state["usar_ipi_por_produto"] = bool(
         usar_ipi_por_produto and col_ipi_produto and "_ipi_produto" in df_merge.columns
     )
+    st.session_state["preco_e_liquido"] = bool(preco_e_liquido)
+    st.session_state["dois_acabamentos"] = bool(dois_acabamentos)
+    st.session_state["margem_fixa"] = float(st.session_state.get("_receita_margem") or 10.0)
     st.session_state["processado"] = True
 
 # ─── Resultados ───────────────────────────────────────────────────────────────
@@ -837,21 +1027,38 @@ if st.session_state.get("processado", False):
     ipi_fixo = st.session_state.get("ipi_fixo", ipi)
     usar_ipi_col = st.session_state.get("usar_ipi_por_produto", False)
 
-    if not df_merge.empty:
-        df_merge["_custo_liquido"] = (df_merge["_preco_limpo"] * 1.10).round(2)
+    preco_e_liquido_calc = st.session_state.get("preco_e_liquido", False)
+    dois_acab_calc = st.session_state.get("dois_acabamentos", False)
+    margem_calc = st.session_state.get("margem_fixa", 10.0)
 
-        if usar_ipi_col and "_ipi_produto" in df_merge.columns:
-            # IPI por produto: usa o IPI de cada linha; linhas sem IPI caem no IPI fixo
-            ipi_linha = df_merge["_ipi_produto"].fillna(ipi_fixo)
-            df_merge["_ipi_aplicado"] = ipi_linha
+    if not df_merge.empty:
+        if dois_acab_calc:
+            # Accord: SEM IPI. O preço do acabamento já escolhido é o custo líquido
+            # e a margem (10%) gera o custo bruto. CUSTO = líquido × 1,10.
+            df_merge["_custo_liquido"] = df_merge["_preco_limpo"].round(2)
+            df_merge["_ipi_aplicado"] = 0.0
             df_merge["_custo_bruto"] = (
-                df_merge["_custo_liquido"] * (1 + ipi_linha / 100)
+                df_merge["_custo_liquido"] * (1 + margem_calc / 100)
             ).round(2)
         else:
-            df_merge["_ipi_aplicado"] = ipi_fixo
-            df_merge["_custo_bruto"] = (
-                df_merge["_custo_liquido"] * (1 + ipi_fixo / 100)
-            ).round(2)
+            if preco_e_liquido_calc:
+                # Preço do fornecedor JÁ é o custo líquido (não aplica os 10%)
+                df_merge["_custo_liquido"] = df_merge["_preco_limpo"].round(2)
+            else:
+                df_merge["_custo_liquido"] = (df_merge["_preco_limpo"] * 1.10).round(2)
+
+            if usar_ipi_col and "_ipi_produto" in df_merge.columns:
+                # IPI por produto: usa o IPI de cada linha; linhas sem IPI caem no IPI fixo
+                ipi_linha = df_merge["_ipi_produto"].fillna(ipi_fixo)
+                df_merge["_ipi_aplicado"] = ipi_linha
+                df_merge["_custo_bruto"] = (
+                    df_merge["_custo_liquido"] * (1 + ipi_linha / 100)
+                ).round(2)
+            else:
+                df_merge["_ipi_aplicado"] = ipi_fixo
+                df_merge["_custo_bruto"] = (
+                    df_merge["_custo_liquido"] * (1 + ipi_fixo / 100)
+                ).round(2)
 
     # ─── Métricas ─────────────────────────────────────────────────────────────
     st.divider()
@@ -863,7 +1070,12 @@ if st.session_state.get("processado", False):
     col_m2.metric("🆕 Precisam ser criados", f"{len(df_precisam_criar):,}")
     col_m3.metric("⚠️ Não atualizados", f"{len(df_nao_atualizados):,}")
     col_m4.metric("🔎 Conferir manual", f"{n_conferir:,}")
-    ipi_label = "Por produto" if usar_ipi_col else f"{ipi_fixo}%"
+    if dois_acab_calc:
+        ipi_label = f"Sem IPI · margem {margem_calc:g}%"
+    elif usar_ipi_col:
+        ipi_label = "Por produto"
+    else:
+        ipi_label = f"{ipi_fixo}%"
     col_m5.metric("📦 IPI", ipi_label)
 
     if n_conferir:
@@ -909,7 +1121,7 @@ if st.session_state.get("processado", False):
     # ─── Relatório ────────────────────────────────────────────────────────────
     if not df_merge.empty:
         df_produtos_doit = df_merge.drop(
-            columns=["_codigo_limpo", "_preco_limpo", "_custo_liquido", "_custo_bruto", "_codigo_norm", "_ref_norm", "_ref_base", "_segunda_parte", "_codigo_alt", "_match_tipo", "_ipi_produto", "_ipi_aplicado"],
+            columns=["_codigo_limpo", "_preco_limpo", "_preco_tingida", "_custo_liquido", "_custo_bruto", "_codigo_norm", "_ref_norm", "_ref_base", "_segunda_parte", "_codigo_alt", "_match_tipo", "_ipi_produto", "_ipi_aplicado"],
             errors="ignore",
         )
     else:
@@ -917,11 +1129,11 @@ if st.session_state.get("processado", False):
 
     df_forn_valido = st.session_state["df_forn_valido"]
     df_produtos_forn = df_forn_valido.drop(
-        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte", "_codigo_alt", "_match_tipo", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
+        columns=["_codigo_limpo", "_preco_limpo", "_preco_tingida", "_aba_origem", "_codigo_norm", "_segunda_parte", "_codigo_alt", "_match_tipo", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
     )
 
     df_criar_saida = df_precisam_criar.drop(
-        columns=["_codigo_limpo", "_preco_limpo", "_aba_origem", "_codigo_norm", "_segunda_parte", "_codigo_alt", "_match_tipo", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
+        columns=["_codigo_limpo", "_preco_limpo", "_preco_tingida", "_aba_origem", "_codigo_norm", "_segunda_parte", "_codigo_alt", "_match_tipo", "_ipi_produto", "_ipi_aplicado"], errors="ignore"
     )
 
     # ─── Tabs de visualização ─────────────────────────────────────────────────

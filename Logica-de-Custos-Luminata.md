@@ -43,6 +43,17 @@ O IPI pode entrar de duas formas:
 
 > Regra de bolso: se a planilha tem uma coluna de IPI por item, use "IPI por produto". Senão, digite o IPI fixo.
 
+### Quando o preço já é o custo líquido
+
+Alguns fornecedores já mandam o **custo líquido** direto na tabela, então o Passo 1 (× 1,10) **não** deve ser aplicado. Para esses casos existe a opção **"Preço já é o custo líquido"**. Com ela ligada a conta vira:
+
+```
+Custo Líquido = Preço do fornecedor        (sem o × 1,10)
+Custo Bruto   = Custo Líquido × (1 + IPI%)
+```
+
+> A **Accord** usa um caso ainda mais específico (dois acabamentos e **sem IPI**). Veja o item 7.
+
 ---
 
 ## 3. Como o app sabe qual produto é qual (cruzamento)
@@ -96,5 +107,39 @@ A aba **Modelo Custo** é o que se importa no DOit. Colunas principais:
 
 ---
 
+## 7. Particularidades da Accord
+
+A Accord (fabricante **L Martinkoski E Cia Ltda Me (Accord)**, ID `7623` no DOit) é um caso à parte. A receita pronta já resolve tudo, mas vale entender a lógica:
+
+- **Várias abas:** a planilha tem 6 abas de produto (**Pendente, Plafon, Arandela, Abajur, Coluna, Mobiliário**) e 3 informativas (Opções de Acabamento, Informações LED, Política de Compra e Venda). A receita já **seleciona apenas as abas de produto** — as informativas são ignoradas automaticamente (não precisa tirar nada à mão).
+- **Cabeçalho na linha 1** e colunas pela posição: **Código = coluna C (Referência)**, **Lâmina Natural = coluna E** e **Lâmina Tingida = coluna F**.
+- **Cruzamento direto:** a referência da Accord (ex: `116`, `202LED`, `4234`) bate direto com a `# Referência` do DOit.
+
+### Dois acabamentos: Natural × Tingida
+
+Cada referência tem **dois preços** (Lâmina Natural e Lâmina Tingida) e, no DOit, vira **vários SKUs** — um por acabamento. Os dois são produtos diferentes, com descrições e custos diferentes, então o app diferencia por SKU:
+
+- SKU com **"NATURAL"** no nome → recebe o preço da **Lâmina Natural**.
+- SKU de **cor/tingido** (ex: 33-Bronze, 40-Azul, 42-Curupixá) → recebe o preço da **Lâmina Tingida**.
+
+Se a **Lâmina Tingida** vier **vazia** para uma referência, os SKUs de cor dela **ficam sem atualizar** (vão para "não atualizados").
+
+### Sem IPI — os 10% são margem
+
+A Accord **não tem IPI**. Os 10% são **margem** aplicada sobre o preço do acabamento:
+
+```
+Custo Líquido = preço do acabamento (Natural ou Tingida)
+Custo         = Custo Líquido × 1,10
+```
+
+> **Atenção à aba Coluna:** ela traz valores de IPI (7,5% e 10%) no topo. Esses valores devem ser **ignorados** — o padrão da Accord é sem IPI.
+
+> Como a planilha nasce de cálculos de markup, muitos preços têm **3 casas decimais** (ex: `1394,275`). O app trata esses valores como número e **não** os confunde com separador de milhar.
+
+---
+
 ### Resumo de uma frase
 > **Custo = (Preço do fornecedor × 1,10) × (1 + IPI).** O resto do app é só garantir que cada produto da planilha encontre o produto certo no DOit.
+>
+> *(Exceções: fornecedores cujo preço já é o custo líquido pulam o primeiro × 1,10; a Accord não tem IPI e escolhe o preço por acabamento — Natural ou Tingida — de cada SKU.)*
